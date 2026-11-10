@@ -1,11 +1,12 @@
 export * from './types';
 export { FixedStepClock } from './clock';
 export { rearM, frontSection, rearSection, occupiedSteps, trainDirection, startOf, endOf } from './geometry';
-export { lookAhead, signalAtEnd } from './lookahead';
+export { lookAhead, signalAhead, signalAtEnd, type SignalAhead } from './lookahead';
 export { spawnTrain, stepTrain, removeTrain, WAIT_OUTSIDE_M, type StepResult, type SpawnResult, type SpawnOptions } from './step';
 export { validateCancelWithTrains } from './protection';
 export { EXPRESS_DEFAULTS, JOURNEYS, testTrainSpec, type JourneyOption } from './scenario';
 export * from './classes';
+export { accelerationAt } from './performance';
 export * from './platforms';
 export * from './planner';
 export * from './fleet';

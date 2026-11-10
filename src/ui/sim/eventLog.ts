@@ -147,7 +147,7 @@ export function attachLogging(sim: Simulation, log: EventLog, shiftRunning: () =
         const route = sim.ctx.route(e.route);
         if (route && sim.ctx.net.signals.get(route.from)?.type === 'manual') log.add('route', 'info', e.text);
       }
-      else log.add('train', e.kind === 'protection-stop' ? 'error' : e.kind === 'stopped' ? 'warn' : 'info', e.text);
+      else log.add('train', e.kind === 'protection-stop' ? 'error' : e.kind === 'stopped' || e.kind === 'overspeed' ? 'warn' : 'info', e.text);
     }
   });
   return () => {

@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ashcombeDefinition, buildNetwork, createSignallingContext, createSignallingState, generateTimetable, validateTimetable } from '../../engine';
+import { ashcombeDefinition, buildNetwork, createSignallingContext, createSignallingState, generateTimetable, concurrencyStats, validateTimetable } from '../../engine';
 import { EventLog, MAX_RECORD, type LogCategory } from './eventLog';
 import { SCENARIOS } from './scenarios';
 import { Simulation, STEP_SECONDS } from './simulation';
@@ -308,6 +308,27 @@ describe('local shift history', () => {
     });
   }
 
+  test('a shift saved before rolling stock existed is kept, with the default stock for each class', () => {
+    const a = setup(null, false);
+    a.shift.generate(1);
+    a.shift.start();
+    a.shift.abandon();
+    const data = JSON.parse(serialiseShifts(a.shift.history));
+    for (const svc of data.shifts[0].timetable.services) {
+      delete svc.model;
+      delete svc.formation;
+    }
+    const parsed = parseShifts(JSON.stringify(data));
+    assert.equal(parsed.length, 1);
+    for (const svc of parsed[0]!.timetable.services) {
+      assert.equal(svc.model, svc.trainClass === 1 ? '800' : svc.trainClass === 2 ? '170' : '150');
+      assert.ok(svc.formation);
+    }
+    // a model that no longer exists is still rejected
+    data.shifts[0].timetable.services[0].model = 'nonsense';
+    assert.deepEqual(parseShifts(JSON.stringify(data)), []);
+  });
+
   test('one outdated or damaged shift is dropped; the others are kept', () => {
     const a = setup(null, false);
     for (const seed of [1, 2]) {
@@ -359,7 +380,7 @@ describe('scenarios', () => {
       const branch = tt.services.filter((v) => v.origin === 'M-IO' || v.destination === 'M-IO').length;
       const stops = tt.services.filter((v) => v.stops).length;
       if (s.id === 'normal') assert.ok([1, 2, 5].every((c) => tt.services.some((v) => v.trainClass === c)));
-      if (s.id === 'busy') assert.ok(stops >= 5 && tt.services.some((v) => v.trainClass === 1));
+      if (s.id === 'busy') assert.ok(stops >= 5 && tt.services.some((v) => v.trainClass === 1) && concurrencyStats(tt.services).maxPresent >= 3);
       if (s.id === 'branch') assert.ok(branch >= 3);
       // deterministic
       assert.deepEqual(generateTimetable(ctx, s.seed as number).services, tt.services);

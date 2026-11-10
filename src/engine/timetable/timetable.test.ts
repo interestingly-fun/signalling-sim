@@ -1,6 +1,10 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  defaultStock,
+  isFlexibleClass1,
+  stockPerformance,
+  sensiblePlans,
   ashcombeDefinition,
   buildNetwork,
   classAllowsLine,
@@ -105,8 +109,8 @@ describe('timetable generation', () => {
   test('class rules: Class 1 mainline only, no platform, no branch, never stops; Class 2/5 platform stops are reachable', () => {
     for (const seed of SEEDS) {
       for (const s of tt(seed).services) {
-        for (const sec of s.sections) assert.ok(classAllowsLine(s.trainClass, net.sections.get(sec)!.line), `${s.headcode} ${sec}`);
-        if (s.trainClass === 1) {
+        for (const sec of s.sections) assert.ok(classAllowsLine(s.trainClass, net.sections.get(sec)!.line, s.model), `${s.headcode} ${sec}`);
+        if (s.trainClass === 1 && !isFlexibleClass1(s.model)) {
           assert.equal(s.stops, false);
           assert.equal(s.platform, null);
           assert.ok(!s.sections.some((x) => ['PLATFORM', 'BRANCH'].includes(net.sections.get(x)!.line)));
@@ -159,7 +163,19 @@ describe('timetable generation', () => {
 
 describe('the validator rejects impossible timetables', () => {
   const base = (): ServiceSchedule[] => [...tt(1).services];
-  const svc = (hc: string): ServiceSchedule => base().find((s) => s.headcode === hc) as ServiceSchedule;
+  // Fixed services with named rolling stock, so these tests do not depend on what a seed happens to generate.
+  const mk = (hc: string, cls: 1 | 2 | 5, model: string, formation: string, origin: string, destination: string, platform: string | null, entryS: number, dwell = 0): ServiceSchedule => {
+    const stock = { model, formation };
+    const plan = sensiblePlans(ctx, planServices(ctx, { trainClass: cls, origin, destination, platform, lengthM: stockPerformance(stock).lengthM, model }), platform)[0]!;
+    return buildService(ctx, { trainClass: cls, stock, origin, destination, platform, plan }, hc, entryS, dwell)!;
+  };
+  const FIXTURES: Record<string, ServiceSchedule> = {
+    '1J53': mk('1J53', 1, '800', '5-car', 'N-IN', 'W-OUT', null, 100),
+    '2D64': mk('2D64', 2, '170', '2-car', 'W-IN', 'N-OUT', 'PLAT1', 150, 90),
+    '2A69': mk('2A69', 2, '150', '2-car', 'M-IO', 'N-OUT', null, 200),
+    '5A18': mk('5A18', 5, '150', '2-car', 'N-IN', 'W-OUT', 'PLAT2', 250, 60),
+  };
+  const svc = (hc: string): ServiceSchedule => (hc === '1M32' ? { ...(FIXTURES['1J53'] as ServiceSchedule), headcode: '1M32', id: '1M32' } : (FIXTURES[hc] as ServiceSchedule));
   const issues = (services: ServiceSchedule[]) => validateTimetable(ctx, { services }, { countRange: [1, 99] });
 
   test('two trains entering the same boundary together', () => {
@@ -170,15 +186,15 @@ describe('the validator rejects impossible timetables', () => {
 
   test('two trains scheduled onto the same platform at the same time', () => {
     const a = svc('2D64');
-    const b = buildService(ctx, { trainClass: 2, origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT1', plan: planServices(ctx, { trainClass: 2, origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT1' })[0]! }, '2Z99', a.entryS + 60, 60)!;
+    const b = buildService(ctx, { trainClass: 2, stock: defaultStock(2), origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT1', plan: planServices(ctx, { trainClass: 2, origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT1' })[0]! }, '2Z99', a.entryS + 60, 60)!;
     const c = conflictsBetween(ctx, a, b);
     assert.ok(c.some((m) => /platform would be double-booked/.test(m)), c.join('|'));
   });
 
   test('opposing trains needing the same section at the same time (platform 2, both directions)', () => {
     const j = (o: string, d: string) => planServices(ctx, { trainClass: 2, origin: o, destination: d, platform: 'PLAT2' })[0]!;
-    const a = buildService(ctx, { trainClass: 2, origin: 'N-IN', destination: 'W-OUT', platform: 'PLAT2', plan: j('N-IN', 'W-OUT') }, '2A01', 100, 60)!;
-    const b = buildService(ctx, { trainClass: 2, origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT2', plan: j('W-IN', 'N-OUT') }, '2A02', 110, 60)!;
+    const a = buildService(ctx, { trainClass: 2, stock: defaultStock(2), origin: 'N-IN', destination: 'W-OUT', platform: 'PLAT2', plan: j('N-IN', 'W-OUT') }, '2A01', 100, 60)!;
+    const b = buildService(ctx, { trainClass: 2, stock: defaultStock(2), origin: 'W-IN', destination: 'N-OUT', platform: 'PLAT2', plan: j('W-IN', 'N-OUT') }, '2A02', 110, 60)!;
     assert.ok(conflictsBetween(ctx, a, b).length > 0);
   });
 
@@ -222,8 +238,8 @@ describe('the validator rejects impossible timetables', () => {
 
 describe('journey options and profiles', () => {
   test('every option the generator may choose has a measured, completable profile', () => {
-    for (const c of [1, 2, 5] as const) assert.ok(journeyOptions(ctx, c).length > 0, `class ${c}`);
-    for (const j of journeyOptions(ctx, 2)) if (j.origin === 'M-IO' || j.destination === 'M-IO') return;
+    for (const c of [1, 2, 5] as const) assert.ok(journeyOptions(ctx, c, defaultStock(c)).length > 0, `class ${c}`);
+    for (const j of journeyOptions(ctx, 2, defaultStock(2))) if (j.origin === 'M-IO' || j.destination === 'M-IO') return;
     assert.fail('no branch journey for class 2');
   });
 });

@@ -228,13 +228,14 @@ describe('trains traverse the extended approaches', () => {
     let train: Train = { ...sp.train, started: true };
     let s = sp.sig;
     let maxFront = 0;
-    for (let i = 0; i < 4000; i++) {
+    for (let i = 0; i < 6000; i++) {
       const r = stepTrain(ctx, s, train, 0.05);
       s = r.sig;
       train = r.train;
       maxFront = Math.max(maxFront, train.frontM);
     }
-    assert.ok(maxFront < 200, `held short of DE2 at 200 m (reached ${maxFront.toFixed(1)})`);
+    const de2 = net.sections.get('DNE2')?.lengthM ?? 0; // DE2 stands at the end of DNE2
+    assert.ok(maxFront < de2, `held short of DE2 at ${de2} m (reached ${maxFront.toFixed(1)})`);
     assert.equal(train.state, 'stopped');
     assert.match(train.holdReason, /DE2/);
   });

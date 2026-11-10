@@ -7,6 +7,7 @@
  * a fresh shift from being started: every function swallows its own failures.
  */
 
+import { defaultStock, isValidStock } from '../../engine';
 import type { ServiceActual, ServiceSchedule, ShiftSummary, Timetable } from '../../engine';
 import type { LogEntry } from './eventLog';
 import type { Shift } from './shift';
@@ -33,7 +34,7 @@ const strOrNull = (v: unknown): v is string | null => v === null || str(v);
 function validService(v: unknown): v is ServiceSchedule {
   return (
     isRec(v) &&
-    str(v.id) && str(v.headcode) && (v.trainClass === 1 || v.trainClass === 2 || v.trainClass === 5) &&
+    str(v.id) && str(v.headcode) && str(v.model) && str(v.formation) && isValidStock({ model: v.model, formation: v.formation }) && (v.trainClass === 1 || v.trainClass === 2 || v.trainClass === 5) &&
     str(v.origin) && str(v.destination) && str(v.entryLine) && str(v.exitLine) && str(v.planId) && str(v.routeLabel) &&
     Array.isArray(v.sections) && v.sections.every(str) && Array.isArray(v.manual) && v.manual.every(str) &&
     typeof v.stops === 'boolean' && strOrNull(v.platform) && num(v.minDwellS) && num(v.scheduledDwellS) &&
@@ -69,18 +70,33 @@ function validTimetable(v: unknown): v is Timetable {
   return isRec(v) && num(v.seed) && num(v.startClockS) && num(v.endS) && typeof v.usedFallback === 'boolean' && num(v.attempts) && Array.isArray(v.rejected) && Array.isArray(v.services) && v.services.length > 0 && v.services.every(validService);
 }
 
+/**
+ * Shifts saved before rolling stock existed (Phase 6) have no model or formation on their services. They are
+ * kept: each service gets the default stock for its class, and the record shows it as such.
+ */
+function withStock(timetable: unknown): unknown {
+  if (!isRec(timetable) || !Array.isArray(timetable.services)) return timetable;
+  const services = timetable.services.map((s: unknown) => {
+    if (!isRec(s) || s.model !== undefined || (s.trainClass !== 1 && s.trainClass !== 2 && s.trainClass !== 5)) return s;
+    const d = defaultStock(s.trainClass);
+    return { ...s, model: d.model, formation: d.formation };
+  });
+  return { ...timetable, services };
+}
+
 /** One stored shift back into a Shift, or null when it does not fit. */
 export function parseShift(v: unknown): Shift | null {
   if (!isRec(v) || !num(v.id) || v.id < 1 || (v.status !== 'completed' && v.status !== 'abandoned') || !numOrNull(v.endedS)) return null;
-  if (!validTimetable(v.timetable) || !validSummary(v.summary) || !Array.isArray(v.actuals) || !Array.isArray(v.events)) return null;
+  const timetable = withStock(v.timetable);
+  if (!validTimetable(timetable) || !validSummary(v.summary) || !Array.isArray(v.actuals) || !Array.isArray(v.events)) return null;
   const actuals = new Map<string, ServiceActual>();
   for (const pair of v.actuals) {
     if (!Array.isArray(pair) || pair.length !== 2 || !str(pair[0]) || !validActual(pair[1])) return null;
     actuals.set(pair[0], pair[1]);
   }
-  if (!v.timetable.services.every((s) => actuals.has(s.id))) return null;
+  if (!timetable.services.every((s) => actuals.has(s.id))) return null;
   const events = v.events.filter(validEvent);
-  return { id: v.id, timetable: v.timetable, status: v.status, endedS: v.endedS, actuals, summary: v.summary, events };
+  return { id: v.id, timetable, status: v.status, endedS: v.endedS, actuals, summary: v.summary, events };
 }
 
 export function serialiseShifts(shifts: readonly Shift[]): string {

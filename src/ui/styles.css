@@ -956,6 +956,7 @@ button.override-on {
 .st-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #5b6b7d; margin-right: 2px; }
 .st-dot.st-ready-to-enter, .st-dot.st-waiting-for-entry, .st-dot.st-ready-to-depart { background: #ffcf5a; }
 .st-dot.st-delayed, .st-dot.st-failed { background: #ff6b5e; }
+.st-dot.st-held-at-signal { background: #ff9f43; }
 .st-dot.st-entered-area, .st-dot.st-approaching-station { background: #4cc9f0; }
 .st-dot.st-at-platform { background: #5fe08a; }
 .st-dot.st-departed-station, .st-dot.st-en-route-to-exit { background: #6f8cff; }
@@ -1066,3 +1067,19 @@ button.mini { font-size: 11px; padding: 0 7px; }
   .summary-cols { grid-template-columns: minmax(0, 1fr); }
 }
 .main > * { min-width: 0; }
+
+/* ---- Phase 7: performance inspector ----------------------------------------------------- */
+.perf h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+.perf h3 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.perf-stock { font-weight: 400; font-size: 12px; }
+.perf .train-readout { margin: 0 0 2px; }
+.speedbar { display: inline-block; width: 70px; height: 5px; margin-left: 8px; vertical-align: middle; background: #1b2635; border-radius: 3px; overflow: hidden; }
+.speedbar > span { display: block; height: 100%; background: var(--accent); }
+.tt-table td.unit { white-space: nowrap; }
+
+/* Phase 8: overspeed warning (information only) */
+.train.overspeed .train-tag { stroke: #ff4d4d; stroke-width: 2.5; fill: #4a1414; }
+.train.overspeed .train-tag-text { fill: #ffb3b3; }
+.perf-warn { margin: 4px 0 6px; padding: 4px 8px; border: 1px solid #ff4d4d; border-radius: 4px; background: rgba(255, 77, 77, 0.14); color: #ffb3b3; font-size: 12px; font-weight: 600; }
+.perf dd.over { color: #ff8a80; font-weight: 700; }
+.perf dd .caution { color: #ffcf5a; }

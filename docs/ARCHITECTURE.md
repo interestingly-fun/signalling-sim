@@ -261,3 +261,45 @@ One test train. Nothing in `engine/trains` knows about coordinates.
 - No scenario with injected delays.
 - The log shows the last 200 matching entries; older ones remain in the record and shift events.
 - Saved history is per browser and per origin.
+
+## 13. Phase 7: rolling stock, train models and performance
+
+**Data.** `engine/rollingstock` holds the database (`ROLLING_STOCK`: `ModelDef` with `FormationDef`s) and queries (`stockProblem`, `permittedClasses`, `isFlexibleClass1`, `defaultStock`, `stockPerformance`). A train has an operating class (1/2/5) *and* a `StockRef {model, formation}` on its `TrainSpec`; class is never used as a model. Generic test trains with no stock keep the Phase 3 defaults.
+
+**Compatibility.** `permissionsFor(trainClass, model)` gives what a train may do. Class 1 expresses never stop or use the branch, except the flexible models (387, 350), which get the Class 2 line permissions and `canStop`. The planner, look-ahead, `createTrain`, the generator and the validator all go through it.
+
+**Performance.** `accelerationAt(spec, v) = a0 · (1 − (1 − taper) · v / vmax)`; braking is a constant service rate on the same braking curve as before, with the emergency rate only when a curve is violated. Longer formations have lower `a0`. Entry speed is the lower of the class entry speed and 75 % of the model's top speed. All movement is in fixed 0.05 s steps.
+
+**Length.** Occupancy, sectional release, the exit boundary and platform fit already worked from the front and rear positions; Phase 7 gives them real lengths. Journey profiles (the generator's lone-train runs) are cached per model and formation, so the timetable's section windows reflect the actual stock.
+
+**Generator.** Stock is chosen on its own RNG stream with database weights, after the class mix, so the shift size and class distribution are unchanged. Flexible Class 1 services stop with probability 0.5.
+
+**Inspector.** `ui/panels/TrainPerformance.tsx` (4 Hz) reads the train and `signalAhead` (next signal, aspect, distance).
+
+### Phase 7 limitations
+- No speed limits are enforced (Phase 8): a 125 mph train can reach high speed in the ~2.8 km area and stops only for signals.
+- Acceleration is a linear taper, not a tractive-effort curve; braking is a single constant rate.
+- Generic test trains created without stock use the legacy defaults.
+- Saved shifts from before Phase 7 get the default stock for their class, not the stock they actually ran.
+
+## 14. Phase 8: speed restrictions, braking, distances, concurrent traffic
+
+**Distances.** `lengthM` on a section is simulated metres. The drawing is separate (`layout/`), and `trackPath` maps metres to drawn positions per section, so a 1,300 m approach can be a short line. Nothing in the movement engine reads the drawing.
+
+**Limits.** `engine/speed/config.ts` is the only place speeds are set. `sectionLimit(net, id)` combines the line kind, "reverse leg of a set of points" (diverging) and per-section entries; the most restrictive wins. `lookAhead` returns the limited segments of the sections it walks (the route as the points lie); `stepTrain` adds the sections already entered.
+
+**Braking.** `speedEnvelope` gives the fastest allowed speed at the front position: model maximum, every restricted stretch the train is inside until its rear leaves, and for each restriction ahead the curve √(L² + 2·a_plan·d). `stepTrain` takes the lower of its existing stop logic (signals, platform) and this envelope, never braking harder than the service rate for a restriction. A train follows the envelope, so there is no abrupt braking and no accelerate/brake chatter.
+
+**Overspeed.** `permittedAt` gives the permitted speed; `SpeedInfo` on the train carries it, the next restriction, and the overspeed flag (with a small tolerance and hysteresis). Events `overspeed` / `overspeed-ended` are raised on change only. Nothing brakes for it. `TrainSpec.ignoreRestrictions` is test-only.
+
+**Signals.** Unchanged. The look-ahead sees the actual chain of aspects; a train is stopped by the first signal at Danger on a service-rate curve, so the approach speed follows from braking capability and block lengths. The blocks on the outer approaches (≈1.2 km) allow a 125 mph train to stop within two blocks.
+
+**Timetable.** `generate.ts` picks a pattern (busy / normal / quiet) that sets the gap between entries, places each service at the earliest time that does not conflict with those already placed (10 s steps), and aims for a target number present at once, relaxing it after many attempts rather than inventing an unsafe overlap. `validate.ts` treats the two sections of the diamond crossing as one resource. `concurrency.ts` measures overlap. The fallback set overlaps.
+
+**Test signaller.** `shiftBot.ts` (tests only) sets each route when the train is near enough to need it (braking distance plus a margin) and the departure route as the dwell runs out, and treats another train's residual route as "wait", not "done".
+
+### Phase 8 limitations
+- Acceleration is still a linear taper, braking constant; no gradient or adhesion.
+- Speed restrictions are by section and by diverging leg, not by train type or time of day.
+- A human signaller can still create a head-on deadlock on the single-track branch by setting conflicting routes early; the timetable avoids it but the interlocking does not forbid it.
+- Concurrency depends on the lone-train windows; a late train can delay the next one.

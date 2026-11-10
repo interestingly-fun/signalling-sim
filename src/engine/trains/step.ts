@@ -23,11 +23,14 @@ import { computeAspects, isAutomaticMovementClear } from '../signalling/aspects'
 import type { SignallingContext } from '../signalling/context';
 import { detachRoute, isResidual, lockRoute, releaseCleared, unlockRoute } from '../signalling/locks';
 import type { Aspect, SignallingState } from '../signalling/types';
-import { classProfile } from './classes';
-import { endOf, frontSection, lastStep, occupiedSteps, rearM } from './geometry';
+import { permissionsFor } from './classes';
+import { msToMph } from '../rollingstock/models';
+import { SPEED_CONFIG, nextRestriction, permittedAt, sectionLimit, speedEnvelope, type LimitSegment } from '../speed';
+import { endOf, frontSection, lastStep, occupiedSteps, rearM, startOf } from './geometry';
+import { accelerationAt } from './performance';
 import { lookAhead, signalAtEnd } from './lookahead';
 import { platformFit } from './platforms';
-import type { Limit, MovementState, OperationalStatus, PathStep, StopState, Train, TrainEvent, TrainSpec } from './types';
+import type { Limit, MovementState, OperationalStatus, PathStep, SpeedInfo, StopState, Train, TrainEvent, TrainSpec } from './types';
 
 export interface StepResult {
   readonly sig: SignallingState;
@@ -78,7 +81,7 @@ export function spawnTrain(net: Network, sig: SignallingState, spec: TrainSpec, 
   if (spec.stop) {
     const platform = net.platforms.get(spec.stop.platform);
     if (!platform) return { ok: false, reason: `Unknown platform ${spec.stop.platform}.` };
-    if (!classProfile(spec.trainClass).canStop) return { ok: false, reason: `Class ${spec.trainClass} trains do not stop here.` };
+    if (!permissionsFor(spec.trainClass, spec.stock?.model).canStop) return { ok: false, reason: `Class ${spec.trainClass} trains do not stop here.` };
     const fit = platformFit(net, platform.id, spec.lengthM);
     if (!fit.ok) return { ok: false, reason: fit.reason };
     stop = { platform: platform.id, section: platform.section, dwellS: spec.stop.dwellS, remainingS: spec.stop.dwellS, phase: 'pending' };
@@ -105,6 +108,7 @@ export function spawnTrain(net: Network, sig: SignallingState, spec: TrainSpec, 
     holdReason: 'Ready to start',
     status: 'waiting to enter',
     stop,
+    speedInfo: { permittedMs: spec.maxSpeedMs, permittedLabel: 'Model maximum', overspeed: false, next: null, envelopeMs: spec.maxSpeedMs },
     plan: options.plan ?? [],
   };
   return { ok: true, sig: writeOccupancy(sig, train), train };
@@ -154,6 +158,14 @@ function writeOccupancy(sig: SignallingState, train: Train): SignallingState {
 
 /** Fastest speed from which the train can still stop `gapM` ahead at the service rate. */
 const curveSpeed = (brake: number, gapM: number): number => Math.sqrt(2 * brake * Math.max(0, gapM));
+
+/** The limits of the sections the train has entered (the ones it is in, or has only just left, and the ones it has left behind). */
+function pathSegments(net: Network, train: Train): LimitSegment[] {
+  return train.path.map((p, i) => {
+    const l = sectionLimit(net, p.section);
+    return { section: p.section, startM: startOf(train, i), endM: endOf(train, i), limitMs: l.limitMs, label: l.label };
+  });
+}
 
 function holdReason(limit: Limit): string {
   switch (limit.kind) {
@@ -208,20 +220,24 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   let target = 0;
   let travelled = 0;
   let protectionStop = false;
+  // Speed restrictions (Phase 8): the sections entered so far and the ones the look-ahead walked through.
+  const segments: LimitSegment[] = [...pathSegments(net, train), ...(limit.segments ?? [])].filter((x) => x.limitMs < spec.maxSpeedMs - 1e-9);
+  const aPlan = spec.serviceBrakeMs2 * SPEED_CONFIG.brakePlanFactor;
+  let envelope = spec.maxSpeedMs;
   if (train.started) {
     const gap = limit.limitM - train.frontM;
     const v = train.speedMs; // after admission
     const lineSpeed = spec.maxSpeedMs;
     if (!Number.isFinite(gap)) {
       target = lineSpeed;
-      v1 = v <= lineSpeed ? Math.min(lineSpeed, v + spec.accelerationMs2 * dt) : Math.max(lineSpeed, v - spec.serviceBrakeMs2 * dt);
+      v1 = v <= lineSpeed ? Math.min(lineSpeed, v + accelerationAt(spec, v) * dt) : Math.max(lineSpeed, v - spec.serviceBrakeMs2 * dt);
     } else {
       // The braking curve: the train plans to stop `stopMarginM` short of the limit at the SERVICE rate.
       const room = gap - margin;
       target = Math.min(lineSpeed, curveSpeed(spec.serviceBrakeMs2, room));
       // Is speed `w` still one from which the train can stop at the margin after moving for this step?
       const safe = (w: number): boolean => (w * w) / (2 * spec.serviceBrakeMs2) <= room - ((v + w) / 2) * dt;
-      const faster = Math.min(lineSpeed, v + spec.accelerationMs2 * dt);
+      const faster = Math.min(lineSpeed, v + accelerationAt(spec, v) * dt);
       if (safe(faster)) v1 = faster;
       else if (safe(v)) v1 = v;
       else {
@@ -229,7 +245,15 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
         const needed = (v * v) / (2 * Math.max(room, 1e-3));
         v1 = Math.max(0, v - Math.min(spec.emergencyBrakeMs2, Math.max(needed, spec.serviceBrakeMs2)) * dt);
       }
-      if (v1 < STANDING_MS && !safe(Math.min(lineSpeed, STANDING_MS + spec.accelerationMs2 * dt))) v1 = 0;
+      if (v1 < STANDING_MS && !safe(Math.min(lineSpeed, STANDING_MS + accelerationAt(spec, STANDING_MS) * dt))) v1 = 0;
+    }
+    // Speed restrictions: plan for the limits ahead and keep within the ones inside. The train follows the braking
+    // envelope (smooth: it falls along a service-rate curve), never braking harder than the service rate for it.
+    // Restrictions are not enforced for a train whose driver ignores them (test only), and never by emergency braking.
+    envelope = speedEnvelope(segments, train.frontM + v * dt, spec.lengthM, aPlan, lineSpeed);
+    if (!spec.ignoreRestrictions) {
+      v1 = Math.min(v1, Math.max(Math.max(0, v - spec.serviceBrakeMs2 * dt), envelope));
+      target = Math.min(target, envelope);
     }
     travelled = ((train.speedMs + v1) / 2) * dt;
     // Hard barrier: never reach the limit, however the numbers fall.
@@ -375,7 +399,15 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   if (!train.started) reason = 'Ready to start';
   if (train.started && state === 'stopped' && trainIn.state !== 'stopped' && reason && status === 'stopped at signal') events.push({ kind: 'stopped', text: `${spec.headcode} stopped. ${reason}.` });
   if (train.started && trainIn.state === 'stopped' && state !== 'stopped' && trainIn.status !== 'waiting to enter') events.push({ kind: 'moving', text: `${spec.headcode} is moving again.` });
-  train = { ...train, state, status, targetSpeedMs: target, limit, holdReason: reason };
+  // --- 7. speed information and the overspeed warning (information only) ----------
+  const now = permittedAt(segments, train.frontM, spec.lengthM, spec.maxSpeedMs);
+  const tol = (SPEED_CONFIG.overspeedToleranceMph * 0.44704);
+  const was = trainIn.speedInfo.overspeed;
+  const over = v1 > now.ms + (was ? 0.1 : tol);
+  if (over && !was) events.push({ kind: 'overspeed', text: `${spec.headcode} is over the speed limit: ${Math.round(msToMph(v1))} mph, permitted ${Math.round(msToMph(now.ms))} mph (${now.label}) at ${frontSection(train) ?? 'the boundary'}.` });
+  if (!over && was) events.push({ kind: 'overspeed-ended', text: `${spec.headcode} is back within the permitted speed (${Math.round(msToMph(v1))} mph, permitted ${Math.round(msToMph(now.ms))} mph).` });
+  const speedInfo: SpeedInfo = { permittedMs: now.ms, permittedLabel: now.label, overspeed: over, next: nextRestriction(segments, train.frontM, v1, spec.serviceBrakeMs2, now.ms), envelopeMs: envelope };
+  train = { ...train, state, status, targetSpeedMs: target, limit, holdReason: reason, speedInfo };
   return { sig, train, events };
 }
 

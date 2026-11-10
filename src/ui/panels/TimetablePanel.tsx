@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { delayText, ON_TIME_S } from '../../engine';
+import { delayText, ON_TIME_S, stockLabel } from '../../engine';
 import { SCENARIOS } from '../sim/scenarios';
 import { placeName, type ServiceRow, type Shift, type ShiftController } from '../sim/shift';
 import type { Simulation } from '../sim/simulation';
@@ -212,6 +212,7 @@ export function TimetablePanel({ sim, shift }: Props) {
                   <th>Entry</th>
                   <th>Headcode</th>
                   <th>Cl</th>
+                  <th>Unit</th>
                   <th>From</th>
                   <th>To</th>
                   <th>Platform</th>
@@ -281,6 +282,10 @@ function TimetableRow({ row, shift, isNext, onCancel }: { row: ServiceRow; shift
         ) : null}
       </td>
       <td>{s.trainClass}</td>
+      <td className="mono unit" title={stockLabel({ model: s.model, formation: s.formation })}>
+        {s.model}
+        <span className="muted"> {s.formation.replace('-car', 'c')}</span>
+      </td>
       <td>{placeName(s.origin)}</td>
       <td>{placeName(s.destination)}</td>
       <td>{s.platform ? s.platform.replace('PLAT', 'Pl ') : '—'}</td>

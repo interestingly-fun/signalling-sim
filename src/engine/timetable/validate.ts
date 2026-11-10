@@ -6,9 +6,10 @@
  */
 
 import type { SignallingContext } from '../signalling';
-import { CLASS_PROFILES, classAllowsLine, platformFit, planServices, type TrainClassId } from '../trains';
+import { isFlexibleClass1, stockPerformance, stockProblem } from '../rollingstock';
+import { classAllowsLine, permissionsFor, platformFit, planServices } from '../trains';
 import { journeyProfile, type JourneyProfile } from './profile';
-import type { ServiceSchedule, Timetable } from './types';
+import { stockOf, type ServiceSchedule, type Timetable } from './types';
 
 /** Two services may not use the same section or point within this many seconds of each other. */
 export const SEPARATION_S = 45;
@@ -30,7 +31,12 @@ interface Window {
 export function resourceWindows(ctx: SignallingContext, s: ServiceSchedule, profile: JourneyProfile): Window[] {
   const out: Window[] = [];
   const secs = profile.sections;
-  for (const [sec, [a, b]] of Object.entries(secs)) out.push({ resource: `section ${sec}`, from: s.entryS + a, to: s.entryS + b });
+  for (const [sec, [a, b]] of Object.entries(secs)) {
+    // Two sections that cross on the flat (the diamond) are ONE resource: a train on either blocks the other.
+    const crosses = ctx.net.sections.get(sec)?.crosses;
+    const resource = crosses && crosses.length > 0 ? `crossing ${[sec, ...crosses].sort().join('/')}` : `section ${sec}`;
+    out.push({ resource, from: s.entryS + a, to: s.entryS + b });
+  }
   for (const p of ctx.net.points.values()) {
     const touched = [p.toe.section, p.normal.section, p.reverse.section].filter((x) => secs[x] !== undefined);
     if (touched.length < 2) continue; // the service does not run through this point
@@ -43,9 +49,10 @@ export function resourceWindows(ctx: SignallingContext, s: ServiceSchedule, prof
 
 /** Profile of a scheduled service, or null if it cannot be measured. */
 export function profileOf(ctx: SignallingContext, s: ServiceSchedule): JourneyProfile | null {
-  const plan = planServices(ctx, { trainClass: s.trainClass, origin: s.origin, destination: s.destination, platform: s.platform, lengthM: CLASS_PROFILES[s.trainClass].lengthM }).find((p) => p.id === s.planId);
+  if (stockProblem(s.trainClass, stockOf(s)) !== null) return null;
+  const plan = planServices(ctx, { trainClass: s.trainClass, origin: s.origin, destination: s.destination, platform: s.platform, lengthM: stockPerformance(stockOf(s)).lengthM, model: s.model }).find((p) => p.id === s.planId);
   if (!plan) return null;
-  return journeyProfile(ctx, { trainClass: s.trainClass, plan, platform: s.platform, dwellS: s.scheduledDwellS });
+  return journeyProfile(ctx, { trainClass: s.trainClass, stock: stockOf(s), plan, platform: s.platform, dwellS: s.scheduledDwellS });
 }
 
 /** Conflicts between two services: [] if they can run as scheduled. */
@@ -78,9 +85,12 @@ export function validateService(ctx: SignallingContext, s: ServiceSchedule): str
   if (!HEADCODE_RE.test(s.headcode)) issues.push(`${tag}: invalid headcode.`);
   if (s.headcode[0] !== String(s.trainClass)) issues.push(`${tag}: the first digit of the headcode must be the class (${s.trainClass}).`);
   if (![1, 2, 5].includes(s.trainClass)) return [...issues, `${tag}: unknown class.`];
-  const profile = CLASS_PROFILES[s.trainClass as TrainClassId];
+  const stockIssue = stockProblem(s.trainClass, stockOf(s));
+  if (stockIssue) return [...issues, `${tag}: ${stockIssue}`];
+  const perms = permissionsFor(s.trainClass, s.model);
+  const lengthM = stockPerformance(stockOf(s)).lengthM;
 
-  const plan = planServices(ctx, { trainClass: s.trainClass, origin: s.origin, destination: s.destination, platform: s.platform, lengthM: profile.lengthM }).find((p) => p.id === s.planId);
+  const plan = planServices(ctx, { trainClass: s.trainClass, origin: s.origin, destination: s.destination, platform: s.platform, lengthM, model: s.model }).find((p) => p.id === s.planId);
   if (!plan) {
     issues.push(`${tag}: no such journey ${s.origin} → ${s.destination} for a Class ${s.trainClass} train in the network.`);
     return issues;
@@ -89,7 +99,7 @@ export function validateService(ctx: SignallingContext, s: ServiceSchedule): str
   if (plan.manual.join('|') !== s.manual.join('|')) issues.push(`${tag}: the movements to set do not match the journey.`);
   for (const sec of s.sections) {
     const line = net.sections.get(sec)?.line;
-    if (!line || !classAllowsLine(s.trainClass, line)) issues.push(`${tag}: Class ${s.trainClass} may not use section ${sec}.`);
+    if (!line || !classAllowsLine(s.trainClass, line, s.model)) issues.push(`${tag}: Class ${s.trainClass} may not use section ${sec}.`);
   }
   const entry = net.boundaries.get(s.origin);
   const exit = net.boundaries.get(s.destination);
@@ -98,12 +108,12 @@ export function validateService(ctx: SignallingContext, s: ServiceSchedule): str
 
   // station stop
   if (s.stops) {
-    if (!profile.canStop) issues.push(`${tag}: Class ${s.trainClass} cannot stop.`);
+    if (!perms.canStop) issues.push(`${tag}: Class ${s.trainClass} cannot stop.`);
     const plat = s.platform ? net.platforms.get(s.platform) : undefined;
     if (!plat) issues.push(`${tag}: a stopping train needs a platform.`);
     else {
       if (!s.sections.includes(plat.section)) issues.push(`${tag}: ${plat.name} is not reachable on its journey.`);
-      const fit = platformFit(net, plat.id, profile.lengthM);
+      const fit = platformFit(net, plat.id, lengthM);
       if (!fit.ok) issues.push(`${tag}: ${fit.reason}`);
     }
     if (s.arrivalS === null || s.departureS === null) issues.push(`${tag}: a stopping train needs scheduled arrival and departure times.`);
@@ -112,7 +122,7 @@ export function validateService(ctx: SignallingContext, s: ServiceSchedule): str
   } else {
     if (s.platform !== null || s.arrivalS !== null || s.departureS !== null) issues.push(`${tag}: a non-stopping train has platform or station times.`);
   }
-  if (s.trainClass === 1 && (s.stops || s.platform !== null || plan.platforms.length > 0 || plan.usesBranch)) issues.push(`${tag}: a Class 1 train must run the mainline without stopping, without platforms or the branch.`);
+  if (s.trainClass === 1 && !isFlexibleClass1(s.model) && (s.stops || s.platform !== null || plan.platforms.length > 0 || plan.usesBranch)) issues.push(`${tag}: a Class 1 train must run the mainline without stopping, without platforms or the branch.`);
 
   // timing against the measured journey
   const prof = profileOf(ctx, s);

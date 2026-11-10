@@ -37,8 +37,10 @@ import {
 const net = buildNetwork(ashcombeDefinition);
 const ctx = createSignallingContext(net);
 const DT = 0.05;
+/** Simulated length of a section: the tests take distances from the network, never from the drawing or from remembered numbers. */
+const L = (id: string): number => net.sections.get(id)?.lengthM ?? NaN;
 /** Metres of the two Northbridge approach sections (DNE2, DNE1) before DN1 on the westbound journey. */
-const PRE = 400;
+const PRE = L('DNE2') + L('DNE1');
 
 const route = (sig: SignallingState, from: string, to: string): SignallingState => {
   const r = requestRoute(ctx, sig, from, to);
@@ -226,19 +228,19 @@ describe('occupancy follows front and rear', () => {
     const w = world(westboundRoutes());
     assert.equal(frontSection(w.train), 'DNE2');
     assert.equal(rearSection(w.train), null);
-    run(w, (x) => x.train.frontM > 200 + 1);
+    run(w, (x) => x.train.frontM > L('DNE2') + 1);
     assert.equal(frontSection(w.train), 'DNE1');
-    assert.equal(rearSection(w.train), 'DNE2', 'rear (front - 160 m) is still in the 200 m first section');
-    run(w, (x) => x.train.frontM > 200 + 160 + 1);
+    assert.equal(rearSection(w.train), 'DNE2', 'rear (front - 160 m) is still in the long first section');
+    run(w, (x) => x.train.frontM > L('DNE2') + 160 + 1);
     assert.equal(rearSection(w.train), 'DNE1');
   });
 
   test('DNE2 stays occupied until the rear passes its far end, not when the front leaves it', () => {
     const w = world(westboundRoutes());
-    run(w, (x) => x.train.frontM > 200 + 1);
+    run(w, (x) => x.train.frontM > L('DNE2') + 1);
     assert.equal(w.sig.network.sectionOccupancy['DNE2'], 'T1', 'front is in DNE1 but the rear is still in DNE2');
     assert.equal(rearSection(w.train), 'DNE2');
-    run(w, (x) => x.train.frontM >= 200 + 160 + 1);
+    run(w, (x) => x.train.frontM >= L('DNE2') + 160 + 1);
     assert.equal(w.sig.network.sectionOccupancy['DNE2'], null);
     assert.equal(w.sig.network.sectionOccupancy['DNE1'], 'T1');
   });
@@ -255,11 +257,11 @@ describe('signals', () => {
   test('stops before a Red signal using the braking curve, with margin, and never passes it', () => {
     // D1 (auto) is clear, D2 has no route: Red. The train must stop in DN2 short of D2.
     const w = world(createSignallingState(net));
-    const d2 = PRE + 170 + 120; // D2 stands at the end of DN2
+    const d2 = PRE + L('DN1') + L('DN2'); // D2 stands at the end of DN2
     let maxFront = 0;
     let maxDecel = 0;
     let prevV = 0;
-    run(w, (x) => x.time > 200, 200, (x) => {
+    run(w, (x) => x.time > 400, 400, (x) => {
       maxFront = Math.max(maxFront, x.train.frontM);
       if (x.train.speedMs > 0) maxDecel = Math.max(maxDecel, (prevV - x.train.speedMs) / DT); // the final partial step to zero is not a braking rate
       prevV = x.train.speedMs;
@@ -279,7 +281,7 @@ describe('signals', () => {
     // run until braking begins, then check the speed profile never increases until stopped
     run(w, (x) => x.train.state === 'braking');
     let prev = w.train.speedMs;
-    run(w, (x) => x.train.state === 'stopped', 200, (x) => {
+    run(w, (x) => x.train.state === 'stopped', 400, (x) => {
       assert.ok(x.train.speedMs <= prev + 1e-9, 'no re-acceleration while braking');
       prev = x.train.speedMs;
     });
@@ -308,7 +310,7 @@ describe('signals', () => {
 
   test('holds at the second signal too, then goes when it is cleared (D3 is Red until D3>D4 is set)', () => {
     const w = world(route(createSignallingState(net), 'D2', 'D3'));
-    run(w, (x) => x.train.state === 'stopped' && x.train.frontM > 400);
+    run(w, (x) => x.train.state === 'stopped' && x.train.frontM > PRE + L('DN1') + L('DN2'));
     assert.match(w.train.holdReason, /signal D3/);
     w.sig = route(w.sig, 'D3', 'D4');
     run(w, (x) => x.train.finished);
@@ -317,8 +319,8 @@ describe('signals', () => {
 
   test('a signal that turns Red while the train approaches: it brakes smoothly and stops short', () => {
     const w = world(westboundRoutes());
-    run(w, (x) => x.train.frontM > PRE + 170 + 120 + 170 + 5 && x.train.speedMs > 15); // in DN4, D3 (end of DN5) ahead, D3>D4 set
-    const d3 = PRE + 170 + 120 + 170 + 120 + 250; // end of DN5
+    run(w, (x) => x.train.frontM > PRE + L('DN1') + L('DN2') + L('DN3') + 5 && x.train.speedMs > 15); // in DN4, D3 (end of DN5) ahead, D3>D4 set
+    const d3 = PRE + L('DN1') + L('DN2') + L('DN3') + L('DN4') + L('DN5'); // end of DN5
     assert.equal(w.train.path.length >= 3, true);
     const c = cancelRoute(ctx, w.sig, 'D3>D4'); // refused? only if occupied - the train is not on DN6..
     assert.ok(c.ok, c.ok ? '' : c.rejection.message);
@@ -333,7 +335,7 @@ describe('signals', () => {
 
   test('a signal that turns Red too close to stop: emergency braking and a hard stop, never past the signal', () => {
     const w = world(westboundRoutes());
-    const d3 = PRE + 170 + 120 + 170 + 120 + 250;
+    const d3 = PRE + L('DN1') + L('DN2') + L('DN3') + L('DN4') + L('DN5');
     run(w, (x) => x.train.speedMs >= 29.9 && x.train.frontM > d3 - 60 - 160); // fast, ~60 m before D3... check below
     // bypass the approach lock on purpose: this is the interlocking being defeated, the train must still be safe
     const r = ctx.route('D3>D4');
@@ -350,8 +352,8 @@ describe('signals', () => {
     for (const dt of [0.05, 0.25, 1, 5, 30]) {
       const w = world(createSignallingState(net));
       let maxFront = 0;
-      run(w, (x) => x.time > 300, 300, (x) => (maxFront = Math.max(maxFront, x.train.frontM)), dt);
-      assert.ok(maxFront < PRE + 170 + 120, `dt=${dt}: front ${maxFront} must stay short of D2 at 290`);
+      run(w, (x) => x.time > 400, 400, (x) => (maxFront = Math.max(maxFront, x.train.frontM)), dt);
+      assert.ok(maxFront < PRE + L('DN1') + L('DN2'), `dt=${dt}: front ${maxFront} must stay short of D2`);
     }
   });
 
@@ -366,7 +368,7 @@ describe('signals', () => {
     const r = requestRoute(ctx, createSignallingState(net), 'D2', 'P2W');
     assert.ok(r.ok, r.ok ? '' : r.rejection.message);
     const w = world(r.state, JOURNEYS[0], true, { trainClass: 2 });
-    run(w, (x) => x.time > 150);
+    run(w, (x) => x.time > 400 || x.train.state === 'stopped');
     assert.deepEqual(sectionsOf(w.train), ['DNE2', 'DNE1', 'DN1', 'DN2', 'DN3', 'DN4', 'P2E', 'P2'], 'followed the established Platform 2 route and nothing else');
     assert.equal(w.train.state, 'stopped');
     assert.match(w.train.holdReason, /signal P2W/);
@@ -383,7 +385,7 @@ describe('look-ahead barriers', () => {
     const lim = lookAhead(net, sig, green(), w.train);
     assert.equal(lim.kind, 'occupied');
     assert.equal(lim.subject, 'DN3');
-    assert.equal(lim.limitM, PRE + 170 + 120); // end of DN2: it will not enter DN3
+    assert.equal(lim.limitM, PRE + L('DN1') + L('DN2')); // end of DN2: it will not enter DN3
   });
 
   test('points not set for the way ahead are a barrier', () => {
@@ -480,16 +482,16 @@ describe('point and route protection', () => {
 
   test('the automatic signals’ movements are locked while the train passes over them', () => {
     const w = world(westboundRoutes());
-    run(w, (x) => x.train.frontM > PRE + 170 + 5); // just past D1
+    run(w, (x) => x.train.frontM > PRE + L('DN1') + 5); // just past D1
     assert.equal(w.sig.sectionLocks['DN2'], 'D1>D2');
     assert.equal(w.sig.residual['D1>D2'], true, 'the passed signal no longer owns the route; it is held as a residual route');
-    run(w, (x) => x.train.frontM > PRE + 1840 + 5); // beyond D4 (end of DN10)
+    run(w, (x) => x.train.frontM > PRE + ['DN1', 'DN2', 'DN3', 'DN4', 'DN5', 'DN6', 'DN7', 'DN8', 'DN9', 'DX', 'DN10'].reduce((n, id) => n + L(id), 0) + 5); // beyond D4 (end of DN10)
     assert.equal(w.sig.residual['D4>DW1'], true);
   });
 
   test('approach locking: a route cannot be cancelled once the train is in its entrance section', () => {
     const w = world(westboundRoutes());
-    run(w, (x) => x.train.frontM > PRE + 170 + 120 + 170 + 120 + 5); // in DN5, where D3 stands
+    run(w, (x) => x.train.frontM > PRE + L('DN1') + L('DN2') + L('DN3') + L('DN4') + 5); // in DN5, where D3 stands
     assert.equal(frontSection(w.train), 'DN5');
     const rej = validateCancelWithTrains(ctx, w.sig, [w.train], 'D3>D4');
     assert.ok(rej, 'refused');
@@ -501,7 +503,7 @@ describe('point and route protection', () => {
 
   test('a conflicting route cannot be set over the train: the interlocking refuses it while the train is on the route', () => {
     const w = world(westboundRoutes());
-    run(w, (x) => x.train.frontM > PRE + 170 + 120 + 170 + 5); // in DN4
+    run(w, (x) => x.train.frontM > PRE + L('DN1') + L('DN2') + L('DN3') + 5); // in DN4
     // Merefield branch route from D3 needs DJ reverse, but DJ is locked and DN... either way it must fail
     const r = ctx.from('D3').find((x) => x.points.some((p) => p.point === 'DJ' && p.position === 'reverse'));
     if (r) {

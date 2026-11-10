@@ -9,6 +9,7 @@ export type ServiceStatus =
   | 'Waiting for entry'
   | 'Delayed'
   | 'Entered area'
+  | 'Held at signal'
   | 'Approaching station'
   | 'At platform'
   | 'Ready to depart'
@@ -31,6 +32,8 @@ export function deriveStatus(s: ServiceSchedule, a: ServiceActual, train: Train 
     return nowS - (a.createdS ?? nowS) < 2 && !train.holdReason.startsWith('Waiting to enter') ? 'Ready to enter' : 'Waiting for entry';
   }
   const stop = train.stop;
+  // Stopped inside the area at a Danger signal or an occupied section: waiting for a route or for the line ahead to clear.
+  if (train.state === 'stopped' && train.started && (train.limit.kind === 'signal' || train.limit.kind === 'occupied') && !(stop && (stop.phase === 'dwelling' || stop.phase === 'done'))) return 'Held at signal';
   if (s.stops && stop) {
     if (stop.phase === 'pending') return train.status === 'approaching platform' || (train.status === 'braking' && train.limit.kind === 'platform') ? 'Approaching station' : 'Entered area';
     if (stop.phase === 'dwelling') return 'At platform';

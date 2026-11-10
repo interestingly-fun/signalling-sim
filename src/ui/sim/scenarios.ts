@@ -14,7 +14,7 @@ export interface Scenario {
 
 export const SCENARIOS: readonly Scenario[] = [
   { id: 'random', label: 'Random shift', description: 'A new random timetable each time.', seed: null },
-  { id: 'normal', label: 'Normal traffic', description: 'A mixture of all three classes: 3 expresses, 2 regional, 1 empty stock; 3 stops.', seed: 1 },
-  { id: 'busy', label: 'Busy station', description: 'Seven services, five of them stopping at Ashcombe, with expresses passing.', seed: 77 },
-  { id: 'branch', label: 'Branch traffic', description: 'Three services use the Merefield branch.', seed: 57 },
+  { id: 'normal', label: 'Normal traffic', description: 'A mixture of all three classes: 2 expresses, 2 regional, 2 empty stock; 3 stops; up to three trains in the area together.', seed: 1 },
+  { id: 'busy', label: 'Busy station', description: 'Seven services, five of them stopping at Ashcombe, with expresses passing and trains overlapping.', seed: 23 },
+  { id: 'branch', label: 'Branch traffic', description: 'Three services use the Merefield branch.', seed: 34 },
 ];

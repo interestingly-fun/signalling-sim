@@ -14,6 +14,8 @@
  *   exitS       the train has COMPLETELY left the area (rear clear of the boundary)
  */
 
+import type { StockRef } from '../rollingstock';
+
 export type LineName = 'UP' | 'DOWN' | 'BRANCH';
 
 /** One scheduled train. */
@@ -22,6 +24,9 @@ export interface ServiceSchedule {
   readonly id: string;
   readonly headcode: string;
   readonly trainClass: 1 | 2 | 5;
+  /** Physical train model (e.g. '170') and its formation (e.g. '2-car'). Separate from the operating class. */
+  readonly model: string;
+  readonly formation: string;
   readonly origin: string;
   readonly destination: string;
   /** Line the train enters on / leaves on (UP, DOWN or BRANCH). */
@@ -61,6 +66,9 @@ export interface Timetable {
   /** Issues found in rejected attempts, for the record. */
   readonly rejected: readonly string[];
 }
+
+/** The rolling stock a service is run with. */
+export const stockOf = (s: Pick<ServiceSchedule, 'model' | 'formation'>): StockRef => ({ model: s.model, formation: s.formation });
 
 /** What actually happened to a service (all null until it happens). */
 export interface ServiceActual {

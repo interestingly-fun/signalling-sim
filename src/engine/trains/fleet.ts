@@ -9,7 +9,8 @@
 
 import type { SignallingContext } from '../signalling/context';
 import type { SignallingState } from '../signalling/types';
-import { classProfile, specForClass, TRAIN_CLASSES, type TrainClassId } from './classes';
+import { defaultStock, getModel, stockPerformance, stockProblem, type StockRef } from '../rollingstock';
+import { classProfile, permissionsFor, specForStock, TRAIN_CLASSES, type TrainClassId } from './classes';
 import { planServices, type ServicePlan } from './planner';
 import { platformFit } from './platforms';
 import { removeTrain, spawnTrain, stepTrain } from './step';
@@ -46,6 +47,12 @@ export interface TrainRequest {
   readonly dwellS?: number;
   /** Plan ID (from planServices). Omitted: the first valid plan. */
   readonly planId?: string;
+  /** Physical model (Phase 7), e.g. '170'. Omitted: the default model for the class. */
+  readonly model?: string;
+  /** Formation of that model, e.g. '2-car'. Omitted: the model's first formation. */
+  readonly formation?: string;
+  /** TEST ONLY (Phase 8): the driver does not slow for speed restrictions, so the overspeed warning can be seen. Signals are still obeyed. */
+  readonly ignoreRestrictions?: boolean;
 }
 
 export type CreateResult =
@@ -80,9 +87,9 @@ export function platformOptions(
   ctx: SignallingContext,
   sig: SignallingState,
   trains: readonly Train[],
-  q: { trainClass: number; origin: string; destination: string; lengthM?: number },
+  q: { trainClass: number; origin: string; destination: string; lengthM?: number; model?: string },
 ): { id: string; name: string }[] {
-  if (!classProfile(q.trainClass).canStop) return [];
+  if (!permissionsFor(q.trainClass, q.model).canStop) return [];
   const out: { id: string; name: string }[] = [];
   for (const p of ctx.net.platforms.values()) {
     if (platformUnavailable(ctx, sig, trains, p.id) !== null) continue;
@@ -91,6 +98,18 @@ export function platformOptions(
     out.push({ id: p.id, name: p.name });
   }
   return out;
+}
+
+/** The model and formation for a request: what was asked for, checked against the class, or the class default. */
+function resolveStock(cls: TrainClassId, req: TrainRequest): StockRef | string {
+  let stock: StockRef;
+  if (req.model !== undefined) {
+    const m = getModel(req.model);
+    stock = { model: req.model, formation: req.formation ?? m?.formations[0]?.id ?? '' };
+  } else if (req.formation !== undefined) {
+    return 'Choose a train model as well as a formation.';
+  } else stock = defaultStock(cls);
+  return stockProblem(cls, stock) ?? stock;
 }
 
 /** Validates a request and creates the train waiting outside its boundary. Nothing is set or moved. */
@@ -109,8 +128,13 @@ export function createTrain(ctx: SignallingContext, sig: SignallingState, existi
   if (!TRAIN_CLASSES.includes(req.trainClass as TrainClassId)) return { ok: false, reason: `Unknown train class ${req.trainClass}.` };
   const cls = req.trainClass as TrainClassId;
   const profile = classProfile(cls);
+  const stockOrReason = resolveStock(cls, req);
+  if (typeof stockOrReason === 'string') return { ok: false, reason: stockOrReason };
+  const stock = stockOrReason;
+  const perms = permissionsFor(cls, stock.model);
+  const length = stockPerformance(stock).lengthM;
   const wantsStop = req.platform !== null && req.platform !== undefined && req.platform !== '';
-  if (wantsStop && !profile.canStop) return { ok: false, reason: `Class ${cls} (${profile.name}) trains never stop at a platform.` };
+  if (wantsStop && !perms.canStop) return { ok: false, reason: `Class ${cls} (${profile.name}) trains never stop at a platform.` };
   const dwellS = req.dwellS ?? profile.defaultDwellS;
   if (!Number.isFinite(dwellS) || dwellS < 0 || dwellS > MAX_DWELL_S) return { ok: false, reason: `Dwell time must be between 0 and ${MAX_DWELL_S} seconds.` };
 
@@ -118,13 +142,13 @@ export function createTrain(ctx: SignallingContext, sig: SignallingState, existi
     const why = platformUnavailable(ctx, sig, existing, req.platform as string);
     if (why) return { ok: false, reason: why };
   }
-  const plans = planServices(ctx, { trainClass: cls, origin: req.origin, destination: req.destination, platform: wantsStop ? req.platform : null, lengthM: profile.lengthM });
+  const plans = planServices(ctx, { trainClass: cls, origin: req.origin, destination: req.destination, platform: wantsStop ? req.platform : null, lengthM: length, model: stock.model });
   if (plans.length === 0) {
     const branch = [req.origin, req.destination].includes('M-IO');
     return {
       ok: false,
       reason:
-        cls === 1 && branch
+        cls === 1 && branch && !perms.canStop
           ? 'Class 1 expresses never use the branch.'
           : wantsStop
             ? `No valid route from ${req.origin} to ${req.destination} calls at that platform for a Class ${cls} train.`
@@ -134,11 +158,12 @@ export function createTrain(ctx: SignallingContext, sig: SignallingState, existi
   const plan = req.planId ? plans.find((p) => p.id === req.planId) : plans[0];
   if (!plan) return { ok: false, reason: 'That route is not valid for this train.' };
 
-  const spec: TrainSpec = specForClass(cls, {
+  const spec: TrainSpec = specForStock(cls, stock, {
     headcode,
     origin: req.origin,
     destination: req.destination,
     stop: wantsStop ? { platform: req.platform as string, dwellS } : null,
+    ...(req.ignoreRestrictions ? { ignoreRestrictions: true } : {}),
   });
   const sp = spawnTrain(ctx.net, sig, spec, id, { id, plan: plan.movements });
   if (!sp.ok) return { ok: false, reason: sp.reason };

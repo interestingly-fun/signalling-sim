@@ -12,7 +12,7 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import type { Network, PathStep } from '../../engine';
+import { stockLabel, type Network, type PathStep } from '../../engine';
 import { buildTrackPath, type LayoutDef, type TrackPath } from '../../layout';
 import type { Simulation } from '../sim/simulation';
 
@@ -76,13 +76,14 @@ export function TrainLayer({ net, layout, sim, onSelectTrain }: Props) {
         return (
           <g
             key={train.id}
-            className={`train ${train.state} cls${train.spec.trainClass}${v.selected ? ' selected' : ''}${waiting ? ' waiting' : ''}`}
+            className={`train ${train.state} cls${train.spec.trainClass}${v.selected ? ' selected' : ''}${waiting ? ' waiting' : ''}${train.speedInfo.overspeed ? ' overspeed' : ''}`}
             aria-label={`Train ${label}`}
             data-headcode={label}
             data-train-id={train.id}
             data-state={train.state}
             data-status={train.status}
             data-selected={v.selected ? 'true' : 'false'}
+            data-overspeed={train.speedInfo.overspeed ? 'true' : 'false'}
           >
             {v.selected ? <polyline className="train-halo" points={toPoints(body)} /> : null}
             <polyline className="train-body" points={toPoints(body)} />
@@ -96,7 +97,7 @@ export function TrainLayer({ net, layout, sim, onSelectTrain }: Props) {
                 onSelectTrain?.(train.id);
               }}
             >
-              <title>{`${label} · Class ${train.spec.trainClass} · ${Math.round(train.speedMs * 2.237)} mph · ${train.status}${train.holdReason ? ' – ' + train.holdReason : ''}`}</title>
+              <title>{`${label} · Class ${train.spec.trainClass} · ${train.spec.stock ? stockLabel(train.spec.stock) + ' · ' : ''}${Math.round(train.speedMs * 2.237)} mph${train.speedInfo.overspeed ? ` – OVERSPEED, permitted ${Math.round(train.speedInfo.permittedMs * 2.237)} mph` : ''} · ${train.status}${train.holdReason ? ' – ' + train.holdReason : ''}`}</title>
             </polyline>
             <g transform={`translate(${f1(mid[0])} ${f1(ty)})`}>
               <rect className="train-tag" x={-w / 2} y={-8} width={w} height={TAG_H} rx={3} />

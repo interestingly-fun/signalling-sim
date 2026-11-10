@@ -5,5 +5,7 @@ export { deriveRoutes, routesFrom } from './topology/routeTable';
 export { ashcombeDefinition } from './topology/ashcombe';
 export * from './signalling';
 export { createInitialState, isOccupied, reviewSetPointPosition, reviewSetOccupied, type NetworkState } from './state/state';
+export * from './rollingstock';
+export * from './speed';
 export * from './trains';
 export * from './timetable';

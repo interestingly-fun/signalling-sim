@@ -27,6 +27,10 @@ import {
 const net = buildNetwork(ashcombeDefinition);
 const ctx = createSignallingContext(net);
 const fresh = () => createSignallingState(net);
+const L = (id: string): number => net.sections.get(id)?.lengthM ?? NaN;
+const sum = (...ids: string[]): number => ids.reduce((n, id) => n + L(id), 0);
+/** Distance along the westbound path to the end of DN10 (signal D4). */
+const D4_END = sum('DNE2', 'DNE1', 'DN1', 'DN2', 'DN3', 'DN4', 'DN5', 'DN6', 'DN7', 'DN8', 'DN9', 'DX', 'DN10');
 
 const force = (s: SignallingState, id: string): SignallingState => {
   const r = setSignalOverride(ctx, s, id, 'FORCED_DANGER');
@@ -153,15 +157,15 @@ describe('trains and a forced signal', () => {
       each?.(w);
     }
   }
-  // D1 stands at the end of DN1: 400 (DNE2+DNE1) + 170 m along the westbound path.
-  const D1_AT = 570;
+  // D1 stands at the end of DN1, after the two outer approach sections.
+  const D1_AT = sum('DNE2', 'DNE1', 'DN1');
 
   test('a train approaching a forced signal brakes and stops short of it, and never passes', () => {
     const w = world(force(routed(), 'D1'));
     let maxFront = 0;
     let decel = 0;
     let prev = 0;
-    run(w, (x) => x.time > 150, 150, (x) => {
+    run(w, (x) => x.time > 400, 400, (x) => {
       maxFront = Math.max(maxFront, x.train.frontM);
       if (x.train.speedMs > 0) decel = Math.max(decel, (prev - x.train.speedMs) / 0.05);
       prev = x.train.speedMs;
@@ -194,7 +198,7 @@ describe('trains and a forced signal', () => {
     w.sig = force(w.sig, 'D4'); // far ahead
     let maxFront = 0;
     run(w, (x) => x.train.state === 'stopped', 400, (x) => (maxFront = Math.max(maxFront, x.train.frontM)));
-    const d4End = 400 + 170 + 120 + 170 + 120 + 250 + 250 + 110 + 240 + 130 + 60 + 220;
+    const d4End = D4_END;
     assert.ok(maxFront < d4End, 'never reaches D4');
     assert.match(w.train.holdReason, /D4/);
     w.sig = release(w.sig, 'D4');
@@ -227,7 +231,7 @@ describe('trains and a forced signal', () => {
     const w = world(routed());
     run(w, (x) => x.train.speedMs >= 29.9 && x.train.frontM > D1_AT + 600); // cruising at line speed well beyond D1
     // force a signal 50 m ahead on the line: D2 is manual, so use D4's neighbour DW1 — instead approach D4 closely
-    const d4End = 400 + 170 + 120 + 170 + 120 + 250 + 250 + 110 + 240 + 130 + 60 + 220;
+    const d4End = D4_END;
     run(w, (x) => x.train.frontM > d4End - 60);
     w.sig = force(w.sig, 'D4');
     let maxFront = 0;

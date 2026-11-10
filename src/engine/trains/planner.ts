@@ -14,7 +14,7 @@ import { otherEnd } from '../topology/network';
 import { stepsFrom } from '../topology/traversal';
 import type { SignallingContext } from '../signalling/context';
 import { signalAtEnd } from './lookahead';
-import { classAllowsLine, classProfile } from './classes';
+import { classAllowsLine, permissionsFor } from './classes';
 import { platformFit } from './platforms';
 import type { PathStep } from './types';
 
@@ -25,6 +25,8 @@ export interface PlanQuery {
   /** Platform the train must stop at, or null/undefined to run through. */
   readonly platform?: string | null;
   readonly lengthM?: number;
+  /** Rolling-stock model (Phase 7). Only matters for models that may work as Class 1 with regional permissions. */
+  readonly model?: string;
 }
 
 export interface ServicePlan {
@@ -50,7 +52,7 @@ const cache = new WeakMap<SignallingContext, Map<string, ServicePlan[]>>();
 export function planServices(ctx: SignallingContext, q: PlanQuery): ServicePlan[] {
   let byKey = cache.get(ctx);
   if (!byKey) cache.set(ctx, (byKey = new Map()));
-  const key = `${q.trainClass}|${q.origin}|${q.destination}|${q.platform ?? ''}|${q.lengthM ?? ''}`;
+  const key = `${q.trainClass}|${permissionsFor(q.trainClass, q.model).canStop}|${q.origin}|${q.destination}|${q.platform ?? ''}|${q.lengthM ?? ''}`;
   let plans = byKey.get(key);
   if (!plans) byKey.set(key, (plans = computePlans(ctx, q)));
   return plans;
@@ -61,14 +63,14 @@ function computePlans(ctx: SignallingContext, q: PlanQuery): ServicePlan[] {
   const boundary = net.boundaries.get(q.origin);
   const dest = net.boundaries.get(q.destination);
   if (!boundary?.entry || !dest?.exit) return [];
-  const profile = classProfile(q.trainClass);
+  const perms = permissionsFor(q.trainClass, q.model);
   const platformSection = q.platform ? net.platforms.get(q.platform)?.section : undefined;
   if (q.platform) {
-    if (!profile.canStop || !platformSection) return [];
+    if (!perms.canStop || !platformSection) return [];
     if (q.lengthM !== undefined && !platformFit(net, q.platform, q.lengthM).ok) return [];
   }
   const start = net.sections.get(boundary.at.section);
-  if (!start || !classAllowsLine(q.trainClass, start.line)) return [];
+  if (!start || !classAllowsLine(q.trainClass, start.line, q.model)) return [];
 
   const plans: ServicePlan[] = [];
   const path: PathStep[] = [{ section: start.id, enterEnd: boundary.at.end }];
@@ -83,7 +85,7 @@ function computePlans(ctx: SignallingContext, q: PlanQuery): ServicePlan[] {
         continue;
       }
       const sec = net.sections.get(step.enter.section);
-      if (!sec || seen.has(sec.id) || !classAllowsLine(q.trainClass, sec.line)) continue;
+      if (!sec || seen.has(sec.id) || !classAllowsLine(q.trainClass, sec.line, q.model)) continue;
       seen.add(sec.id);
       path.push({ section: sec.id, enterEnd: step.enter.end });
       walk();

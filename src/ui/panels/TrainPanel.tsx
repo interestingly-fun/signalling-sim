@@ -2,15 +2,20 @@ import { useState, useSyncExternalStore } from 'react';
 import {
   CLASS_PROFILES,
   TRAIN_CLASSES,
-  classProfile,
-  frontSection,
+  defaultStock,
+  getModel,
+  modelsForClass,
+  permissionsFor,
+  stockLabel,
+  stockPerformance,
   planServices,
   platformOptions,
-  rearSection,
   type Train,
   type TrainClassId,
 } from '../../engine';
+import type { ShiftController } from '../sim/shift';
 import { STEP_SECONDS, type Simulation } from '../sim/simulation';
+import { TrainPerformance } from './TrainPerformance';
 
 interface Props {
   readonly sim: Simulation;
@@ -36,8 +41,6 @@ const EXITS = [
   { id: 'W-OUT', label: 'Westford (W-OUT)' },
   { id: 'M-IO', label: 'Merefield (M-IO)' },
 ];
-
-const speedText = (t: Train): string => `${(t.speedMs * MPH).toFixed(0)} mph (${t.speedMs.toFixed(1)} m/s)`;
 
 /** Platform text, e.g. "PLAT1" or "—". */
 export const platformText = (t: Train): string => (t.stop ? `${t.stop.platform}${t.stop.phase === 'departed' ? ' (left)' : ''}` : '—');
@@ -72,32 +75,43 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
   const [platform, setPlatform] = useState('');
   const [dwell, setDwell] = useState<number>(CLASS_PROFILES[2].defaultDwellS);
   const [planId, setPlanId] = useState('');
+  const [modelId, setModelId] = useState<string>(defaultStock(2).model);
+  const [ignoreLimits, setIgnoreLimits] = useState(false);
+  const [formationId, setFormationId] = useState<string>(defaultStock(2).formation);
 
-  const profile = classProfile(cls);
-  const wantsStop = stops && profile.canStop;
-  const platforms = wantsStop ? platformOptions(ctx, sig, sim.trains, { trainClass: cls, origin, destination, lengthM: profile.lengthM }) : [];
+  const models = modelsForClass(cls);
+  const model = models.find((m) => m.id === modelId) ?? models[0]!;
+  const formation = model.formations.find((f) => f.id === formationId) ?? model.formations[0]!;
+  const stock = { model: model.id, formation: formation.id };
+  const perms = permissionsFor(cls, model.id);
+  const lengthM = stockPerformance(stock).lengthM;
+  const wantsStop = stops && perms.canStop;
+  const platforms = wantsStop ? platformOptions(ctx, sig, sim.trains, { trainClass: cls, origin, destination, lengthM, model: model.id }) : [];
   const platformId = platforms.some((p) => p.id === platform) ? platform : (platforms[0]?.id ?? '');
-  const plans = planServices(ctx, { trainClass: cls, origin, destination, platform: wantsStop ? platformId || '__none__' : null, lengthM: profile.lengthM });
+  const plans = planServices(ctx, { trainClass: cls, origin, destination, platform: wantsStop ? platformId || '__none__' : null, lengthM, model: model.id });
   const plan = plans.find((p) => p.id === planId) ?? plans[0];
 
   let problem = '';
   if (plans.length === 0) {
-    if (cls === 1 && (origin === 'M-IO' || destination === 'M-IO')) problem = 'Class 1 expresses never use the branch.';
+    if (cls === 1 && !perms.canStop && (origin === 'M-IO' || destination === 'M-IO')) problem = `A Class 1 ${model.name} never uses the branch.`;
     else if (wantsStop && platforms.length === 0) problem = 'No platform is available: none is reachable on this journey, or they are occupied or already assigned.';
     else problem = `No valid route from ${origin} to ${destination} for a Class ${cls} train.`;
   } else if (origin === destination) problem = 'Origin and destination are the same.';
 
   const changeClass = (c: TrainClassId) => {
     setCls(c);
+    const d = defaultStock(c);
+    setModelId(d.model);
+    setFormationId(d.formation);
     setHeadcode(nextHeadcode(sim, c));
     setDwell(CLASS_PROFILES[c].defaultDwellS);
-    setStops(c === 2); // regional trains stop by default; expresses never do; ECS runs through unless asked
+    setStops(c === 2); // regional trains stop by default; ECS and expresses run through unless asked
   };
 
   const onCreate = () => {
-    const r = sim.create({ headcode, trainClass: cls, origin, destination, platform: wantsStop ? platformId : null, dwellS: wantsStop ? dwell : 0, planId: plan?.id });
+    const r = sim.create({ headcode, trainClass: cls, origin, destination, platform: wantsStop ? platformId : null, dwellS: wantsStop ? dwell : 0, planId: plan?.id, model: model.id, formation: formation.id, ...(ignoreLimits ? { ignoreRestrictions: true } : {}) });
     if (r.ok) {
-      onMessage('ok', `Train ${r.train.spec.headcode} (Class ${cls}) created outside ${origin}${wantsStop ? `, stopping at ${platformId} for ${dwell} s` : ', running through'}. Routes to set: ${r.plan.manual.join(', ') || 'none'}.`);
+      onMessage('ok', `Train ${r.train.spec.headcode} (Class ${cls}, ${stockLabel(stock)}) created outside ${origin}${wantsStop ? `, stopping at ${platformId} for ${dwell} s` : ', running through'}. Routes to set: ${r.plan.manual.join(', ') || 'none'}.`);
       setHeadcode(nextHeadcode(sim, cls));
     } else onMessage('error', r.reason);
   };
@@ -123,6 +137,36 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Model{' '}
+            <select
+              aria-label="Train model"
+              value={model.id}
+              onChange={(e) => {
+                setModelId(e.target.value);
+                setFormationId(getModel(e.target.value)?.formations[0]?.id ?? '');
+              }}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Formation{' '}
+            <select aria-label="Formation" value={formation.id} onChange={(e) => setFormationId(e.target.value)}>
+              {model.formations.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.id} · {f.lengthM} m
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title="Test only: the driver does not slow for speed restrictions, so the overspeed warning can be seen. Signals are still obeyed.">
+            <input type="checkbox" aria-label="Ignore speed restrictions" checked={ignoreLimits} onChange={(e) => setIgnoreLimits(e.target.checked)} /> Ignore speed limits (test)
           </label>
           <label>
             Headcode{' '}
@@ -155,7 +199,7 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
             </select>
           </label>
           <label>
-            <input type="checkbox" aria-label="Station stop" checked={wantsStop} disabled={!profile.canStop} onChange={(e) => setStops(e.target.checked)} /> Station stop
+            <input type="checkbox" aria-label="Station stop" checked={wantsStop} disabled={!perms.canStop} onChange={(e) => setStops(e.target.checked)} /> Station stop
           </label>
           {wantsStop ? (
             <>
@@ -188,7 +232,7 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
             </select>
           </label>
         </div>
-        {!profile.canStop ? <p className="note">Class 1 expresses never stop and never use platform loops or the branch.</p> : null}
+        {!perms.canStop ? <p className="note">A {model.name} working as Class 1 never stops, never uses platform loops and never uses the branch. Class 387 and 350 can work as Class 1 with stops and the branch.</p> : null}
         {plan && !problem ? <p className="note" data-testid="plan-moves">Signaller sets: {plan.manual.join(', ') || 'nothing'}.</p> : null}
         {problem ? (
           <p className="note warn" role="alert" data-testid="create-problem">
@@ -255,7 +299,9 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
                   {t.spec.headcode}
                 </button>
               </td>
-              <td>{t.spec.trainClass}</td>
+              <td title={stockLabel(t.spec.stock)}>
+                {t.spec.trainClass} <span className="muted">{t.spec.stock ? `${t.spec.stock.model}·${t.spec.stock.formation.replace('-car', 'c')}` : ''}</span>
+              </td>
               <td data-testid={`status-${t.spec.headcode}`}>{sim.isPaused && !t.finished && t.started ? 'paused' : t.status}</td>
               <td>{t.finished ? '—' : `${(t.speedMs * MPH).toFixed(0)} mph`}</td>
               <td>{t.stop ? `${t.stop.platform}${t.stop.phase === 'dwelling' ? ` ${Math.ceil(t.stop.remainingS)}s` : ''}` : '—'}</td>
@@ -277,62 +323,16 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
       </table>
       <p className="note">
         Fixed {Math.round(1 / STEP_SECONDS)} Hz simulation; pause stops every train and every dwell timer. Trains obey signals and follow only the routes you set. A new train waits outside its boundary until started, then enters at its class entry speed
-        ({TRAIN_CLASSES.map((c) => `Class ${c}: ${CLASS_PROFILES[c].entrySpeedMs} m/s`).join(', ')}) when the line ahead allows.
+        ({TRAIN_CLASSES.map((c) => `Class ${c}: ${CLASS_PROFILES[c].entrySpeedMs} m/s`).join(', ')}; never more than three quarters of the model's top speed) when the line ahead allows.
       </p>
     </div>
   );
 }
 
-/** Details of the selected train: shown in the Inspector panel. */
-export function TrainDetails({ sim }: { readonly sim: Simulation }) {
+/** Details of the selected train: shown in the Inspector panel (the performance inspector). */
+export function TrainDetails({ sim, shift }: { readonly sim: Simulation; readonly shift?: ShiftController }) {
   useSyncExternalStore(sim.subscribeFrame, sim.getFrame);
   const t = sim.train;
   if (!t || sim.trains.length === 0) return null;
-  const live = !t.finished;
-  const front = live ? frontSection(t) : null;
-  const rear = live ? rearSection(t) : null;
-  const plan = sim.planOf(t.id);
-  return (
-    <section className="train-details" aria-label="Selected train" data-testid="train-details">
-      <h3>
-        Train <span data-testid="ro-headcode">{t.spec.headcode}</span>
-      </h3>
-      <dl className="train-readout">
-        <dt>Class</dt>
-        <dd data-testid="ro-class">
-          {t.spec.trainClass} · {classProfile(t.spec.trainClass).name}
-        </dd>
-        <dt>Section (front)</dt>
-        <dd data-testid="ro-section">{live ? (front ?? 'outside the boundary') : '—'}</dd>
-        <dt>Section (rear)</dt>
-        <dd data-testid="ro-rear">{live ? (rear ?? 'outside the area') : '—'}</dd>
-        <dt>Speed</dt>
-        <dd data-testid="ro-speed">{live ? speedText(t) : '—'}</dd>
-        <dt>Movement</dt>
-        <dd data-testid="ro-state">{t.state}</dd>
-        <dt>Status</dt>
-        <dd data-testid="ro-status">{sim.isPaused && live && t.started ? 'paused' : t.status}</dd>
-        <dt>Platform</dt>
-        <dd data-testid="ro-platform">{platformText(t)}</dd>
-        <dt>Dwell</dt>
-        <dd data-testid="ro-dwell">{dwellText(t)}</dd>
-        <dt>Destination</dt>
-        <dd data-testid="ro-destination">{t.spec.destination}</dd>
-        <dt>From</dt>
-        <dd>{t.spec.origin}</dd>
-        {t.holdReason ? (
-          <>
-            <dt>Held</dt>
-            <dd data-testid="ro-hold">{t.holdReason}</dd>
-          </>
-        ) : null}
-        {plan ? (
-          <>
-            <dt>Route</dt>
-            <dd>{plan.label}</dd>
-          </>
-        ) : null}
-      </dl>
-    </section>
-  );
+  return <TrainPerformance sim={sim} shift={shift} train={t} />;
 }

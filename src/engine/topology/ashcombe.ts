@@ -4,6 +4,11 @@
  * This file is PURE TOPOLOGY. There are no coordinates here. To see how it is
  * drawn, look at src/layout/ashcombeLayout.ts, which refers to the same IDs.
  *
+ * DISTANCES (Phase 8): section lengths are SIMULATED metres and have nothing to do with how long the
+ * section is drawn. The outer approaches and departures are long (about 3.4 km into the junction from
+ * Westford and from Northbridge, 2.4 km on the branch, 2.5-3 km away) so fast trains can be given proper
+ * braking distances; the junction itself is compact.
+ *
  * GEOMETRY IN WORDS (west on the left, north at the top)
  * ------------------------------------------------------
  *   Westford (DOWN boundary) ........ west end of the main lines
@@ -71,7 +76,7 @@ export const ashcombeDefinition: NetworkDef = {
   // -------------------------------------------------------------------------
   sections: [
     // UP main, eastbound only. A = west end, B = east end.
-    sec('UP1', 'UP', 260, 'AB'), //  Westford boundary -> U1
+    sec('UP1', 'UP', 900, 'AB'), //  Westford boundary -> U1
     sec('UP2', 'UP', 300, 'AB'), //  U1 -> U2
     sec('UP3', 'UP', 100, 'AB'), //  U2 -> UJ (normal leg of UJ)
     sec('UP4', 'UP', 120, 'AB'), //  toe section of UJ, up to U3
@@ -82,14 +87,14 @@ export const ashcombeDefinition: NetworkDef = {
     sec('UP9', 'UP', 250, 'AB'), //  U5 -> PE1 (normal leg of PE1)
     sec('UP10', 'UP', 220, 'AB'), // toe of PE1 and normal leg of EXU
     sec('UP11', 'UP', 170, 'AB'), // toe of EXU, up to U6
-    sec('UP12', 'UP', 190, 'AB'), // U6 -> UE1
+    sec('UP12', 'UP', 600, 'AB'), // U6 -> UE1
     // Phase 3.5 boundary approaches: automatic block sections outside the original area edge.
-    sec('UPW2', 'UP', 200, 'AB'), //  Westford boundary -> UW2 (outer entry block)
-    sec('UPW1', 'UP', 200, 'AB'), //  UW2 -> UW1
-    sec('UPE1', 'UP', 200, 'AB'), //  UE1 -> Northbridge boundary (exit block)
+    sec('UPW2', 'UP', 1300, 'AB'), //  Westford boundary -> UW2 (outer entry block)
+    sec('UPW1', 'UP', 1200, 'AB'), //  UW2 -> UW1
+    sec('UPE1', 'UP', 1700, 'AB'), //  UE1 -> Northbridge boundary (exit block)
 
     // DOWN main, westbound normally. A = west end, B = east end.
-    sec('DN1', 'DOWN', 170, 'BA'), //  Northbridge boundary -> D1
+    sec('DN1', 'DOWN', 900, 'BA'), //  Northbridge boundary -> D1
     sec('DN2', 'DOWN', 120, 'BA'), //  D1 -> D2
     sec('DN3', 'DOWN', 170, 'BA'), //  D2 -> EXD (normal leg of EXD)
     // DN4..DN7: bi-directional so eastbound trains can run through Platform 2.
@@ -101,11 +106,11 @@ export const ashcombeDefinition: NetworkDef = {
     sec('DN9', 'DOWN', 130, 'BA'), //  DJ normal leg, up to the diamond
     sec('DX', 'DOWN', 60, 'BA', { crosses: ['LBX'] }), // diamond: DOWN main side
     sec('DN10', 'DOWN', 220, 'BA'), // diamond -> D4
-    sec('DN11', 'DOWN', 290, 'BA'), // D4 -> DW1
-    sec('DNW1', 'DOWN', 200, 'BA'), // DW1 -> DW2
-    sec('DNW2', 'DOWN', 200, 'BA'), // DW2 -> Westford boundary (exit block)
-    sec('DNE2', 'DOWN', 200, 'BA'), // Northbridge boundary -> DE2 (outer entry block)
-    sec('DNE1', 'DOWN', 200, 'BA'), // DE2 -> DE1
+    sec('DN11', 'DOWN', 700, 'BA'), // D4 -> DW1
+    sec('DNW1', 'DOWN', 800, 'BA'), // DW1 -> DW2
+    sec('DNW2', 'DOWN', 1100, 'BA'), // DW2 -> Westford boundary (exit block)
+    sec('DNE2', 'DOWN', 1300, 'BA'), // Northbridge boundary -> DE2 (outer entry block)
+    sec('DNE1', 'DOWN', 1200, 'BA'), // DE2 -> DE1
 
     // Platform loops. A = west end, B = east end.
     sec('P1W', 'PLATFORM', 110, 'AB'), //  PW1 reverse leg (west throat of Platform 1)
@@ -121,9 +126,9 @@ export const ashcombeDefinition: NetworkDef = {
     sec('XE', 'CROSSOVER', 110, 'AB'), // A on DOWN main (EXD) -> B on UP main (EXU)
 
     // Branch. A = Merefield (south-west) end.
-    sec('BRM3', 'BRANCH', 200, 'both'), // Merefield boundary -> MW3 (outer block, single track)
-    sec('BRM2', 'BRANCH', 200, 'both'), // MW3 / MX2 -> MW2
-    sec('BRM1', 'BRANCH', 200, 'both'), // MW2 / MX1 -> MW1
+    sec('BRM3', 'BRANCH', 900, 'both'), // Merefield boundary -> MW3 (outer block, single track)
+    sec('BRM2', 'BRANCH', 800, 'both'), // MW3 / MX2 -> MW2
+    sec('BRM1', 'BRANCH', 700, 'both'), // MW2 / MX1 -> MW1
     sec('BR1', 'BRANCH', 90, 'both'), //  MW1 / MX1 -> M1 / M2
     sec('BR2', 'BRANCH', 110, 'both'), // toe section of BJ
     // Leg A: BJ -> DJ (for trains leaving the main line towards Merefield).

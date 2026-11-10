@@ -121,7 +121,7 @@ function History({ shift, shiftData }: { shift: ShiftController; shiftData: Shif
             {rows.map((r) => (
               <tr key={r.service.id} className={`tt-row${openId === r.service.id ? ' selected' : ''}`} onClick={() => setOpenId(openId === r.service.id ? null : r.service.id)} data-testid={`hist-row-${r.service.headcode}`}>
                 <td className="mono">
-                  {r.service.headcode} <span className="muted">Cl{r.service.trainClass}</span>
+                  {r.service.headcode} <span className="muted">Cl{r.service.trainClass} · {r.service.model} {r.service.formation.replace('-car', 'c')}</span>
                 </td>
                 <td>
                   {placeName(r.service.origin)} → {placeName(r.service.destination)}

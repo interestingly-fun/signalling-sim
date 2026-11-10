@@ -8,6 +8,8 @@
  * sections are occupied, where to draw it) is derived from those two numbers.
  */
 
+import type { StockRef } from '../rollingstock';
+import type { LimitSegment, NextRestriction } from '../speed';
 import type { EndId } from '../topology/types';
 
 /** Configurable movement model and identity of a train. */
@@ -18,12 +20,19 @@ export interface TrainSpec {
   readonly lengthM: number;
   readonly maxSpeedMs: number;
   readonly accelerationMs2: number;
+  /**
+   * Fraction of `accelerationMs2` still available at `maxSpeedMs` (Phase 7). The rate falls linearly with speed
+   * between the two. Absent or 1: a constant rate (the Phase 3 behaviour).
+   */
+  readonly accelTaper?: number;
   /** Normal braking rate. The braking curve to a stop is planned with this. */
   readonly serviceBrakeMs2: number;
   /** Strongest braking rate, used only if the planned curve is violated (e.g. a signal turns Red close by). */
   readonly emergencyBrakeMs2: number;
   /** The train plans to stop this far short of a Red signal or other barrier. */
   readonly stopMarginM: number;
+  /** The physical model and formation this performance came from (Phase 7). Absent only on generic test trains. */
+  readonly stock?: StockRef;
   /** Boundary the train enters the area through. */
   readonly origin: string;
   /** Boundary the train is expected to leave through. */
@@ -34,6 +43,11 @@ export interface TrainSpec {
    * Above 0: the train waits just OUTSIDE the boundary and is admitted at this speed.
    */
   readonly entrySpeedMs?: number;
+  /**
+   * TEST ONLY (Phase 8): the driver does not slow for speed restrictions, so a train can be made to exceed them and
+   * the overspeed warning can be seen. Signals are still obeyed.
+   */
+  readonly ignoreRestrictions?: boolean;
   /** Station stop: the platform to stop at and how long to dwell (simulated seconds). Absent: runs through. */
   readonly stop?: StopRequest | null;
 }
@@ -90,6 +104,20 @@ export type MovementState = 'ready' | 'accelerating' | 'cruising' | 'braking' | 
 /** What currently limits how far the train may go. */
 export type LimitKind = 'signal' | 'points' | 'occupied' | 'horizon' | 'exit' | 'platform' | 'restricted';
 
+/** Speed information for the performance inspector and the overspeed warning (Phase 8). Information only. */
+export interface SpeedInfo {
+  /** The speed permitted at the front now: the most restrictive of the model maximum and the restricted sections the train occupies. */
+  readonly permittedMs: number;
+  /** What sets it, e.g. "Diverging route 40 mph". */
+  readonly permittedLabel: string;
+  /** Above the permitted speed by more than the tolerance. A warning only: ordinary limits are never enforced by braking. */
+  readonly overspeed: boolean;
+  /** The nearest lower restriction ahead, with the braking distance needed to meet it. */
+  readonly next: NextRestriction | null;
+  /** Speed the train is planning to be at (the braking envelope for restrictions ahead). */
+  readonly envelopeMs: number;
+}
+
 export interface Limit {
   readonly kind: LimitKind;
   /** Furthest distance the FRONT may reach along the path; Infinity when nothing limits it. */
@@ -98,6 +126,8 @@ export interface Limit {
   readonly subject?: string;
   /** Stand this far short of the limit instead of the train's usual margin (a platform stopping position). */
   readonly marginM?: number;
+  /** The speed-restricted stretches of the sections ahead the scan walked through (Phase 8). */
+  readonly segments?: readonly LimitSegment[];
 }
 
 export interface Train {
@@ -128,6 +158,8 @@ export interface Train {
   readonly status: OperationalStatus;
   /** Station stop in progress, or null when the train runs through. */
   readonly stop: StopState | null;
+  /** Permitted speed, upcoming restriction and overspeed warning (Phase 8). */
+  readonly speedInfo: SpeedInfo;
   /** Movement IDs (signal-to-signal routes) of the service plan the signaller is expected to set. Informational. */
   readonly plan: readonly string[];
 }
@@ -145,4 +177,6 @@ export type TrainEvent =
   | { readonly kind: 'ready'; readonly platform: string; readonly text: string }
   | { readonly kind: 'departed'; readonly platform: string; readonly text: string }
   | { readonly kind: 'exited'; readonly text: string }
+  | { readonly kind: 'overspeed'; readonly text: string }
+  | { readonly kind: 'overspeed-ended'; readonly text: string }
   | { readonly kind: 'finished'; readonly text: string };

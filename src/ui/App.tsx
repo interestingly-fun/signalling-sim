@@ -259,7 +259,7 @@ export function App() {
           <div className="panel">
             <h2>Inspector</h2>
             <ServiceDetails sim={sim} shift={shift} />
-            <TrainDetails sim={sim} />
+            <TrainDetails sim={sim} shift={shift} />
             <InspectorPanel
               ctx={ctx}
               state={sig}

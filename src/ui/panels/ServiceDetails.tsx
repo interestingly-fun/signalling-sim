@@ -1,4 +1,4 @@
-import { CLASS_PROFILES, delayText, ON_TIME_S, type ServiceSchedule } from '../../engine';
+import { CLASS_PROFILES, delayText, ON_TIME_S, stockLabel, type ServiceSchedule } from '../../engine';
 import { placeName, type ServiceRow, type ShiftController } from '../sim/shift';
 import type { Simulation } from '../sim/simulation';
 import { useSlowFrame } from '../sim/useSlowFrame';
@@ -20,10 +20,12 @@ export function JourneyDetail({ shift, row, testPrefix = 'sv' }: { shift: ShiftC
   return (
     <>
       <dl className="train-readout">
-        <dt>Class</dt>
+        <dt>Operating class</dt>
         <dd>
           {s.trainClass} · {CLASS_PROFILES[s.trainClass].name}
         </dd>
+        <dt>Train</dt>
+        <dd data-testid={`${testPrefix}-stock`}>{stockLabel({ model: s.model, formation: s.formation })}</dd>
         <dt>From → To</dt>
         <dd data-testid={`${testPrefix}-journey`}>
           {placeName(s.origin)} ({s.entryLine}) → {placeName(s.destination)} ({s.exitLine})

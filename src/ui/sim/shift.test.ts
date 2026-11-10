@@ -204,7 +204,7 @@ describe('station operations in a shift', () => {
   });
 
   test('ready to depart but no route: it waits at the signal until the signaller sets one, and both conditions are respected', () => {
-    const { sim, shift } = setup(1, { skip: (m, hc) => hc === shift0.hc && m === shift0.m });
+    const { sim, shift } = setup(1, { skip: (m) => m !== '' && m === shift0.m }); // the movement is withheld from everyone: with concurrent traffic another service may use it
     // choose the stopper and its departure movement after the controller has the timetable
     const s0 = shift.draft!.services.find((s) => s.stops)!;
     shift0.hc = s0.headcode;

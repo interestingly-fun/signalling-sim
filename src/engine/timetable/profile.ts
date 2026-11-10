@@ -12,6 +12,7 @@
  */
 
 import { checkLockInvariants, requestRoute, createSignallingState, type SignallingContext, type SignallingState } from '../signalling';
+import type { StockRef } from '../rollingstock';
 import { createTrain, occupiedSteps, stepFleet, type ServicePlan, type Train } from '../trains';
 
 const DT = 0.05;
@@ -31,6 +32,8 @@ export interface JourneyProfile {
 
 export interface ProfileQuery {
   readonly trainClass: number;
+  /** Model and formation: a different train takes a different time over the same journey. */
+  readonly stock: StockRef;
   readonly plan: ServicePlan;
   readonly platform: string | null;
   readonly dwellS: number;
@@ -42,7 +45,7 @@ const cache = new WeakMap<SignallingContext, Map<string, JourneyProfile | null>>
 export function journeyProfile(ctx: SignallingContext, q: ProfileQuery): JourneyProfile | null {
   let byKey = cache.get(ctx);
   if (!byKey) cache.set(ctx, (byKey = new Map()));
-  const key = `${q.trainClass}|${q.plan.id}|${q.platform ?? ''}|${q.dwellS}`;
+  const key = `${q.trainClass}|${q.stock.model}|${q.stock.formation}|${q.plan.id}|${q.platform ?? ''}|${q.dwellS}`;
   if (!byKey.has(key)) byKey.set(key, measure(ctx, q));
   return byKey.get(key) ?? null;
 }
@@ -56,7 +59,7 @@ function measure(ctx: SignallingContext, q: ProfileQuery): JourneyProfile | null
   if (!origin || !destination) return null;
 
   let sig: SignallingState = createSignallingState(ctx.net);
-  const made = createTrain(ctx, sig, [], { headcode: '1P00', trainClass: q.trainClass, origin: origin.id, destination: destination.id, platform: q.platform, dwellS: q.dwellS, planId: q.plan.id }, 'P', { ignorePlatformAvailability: true });
+  const made = createTrain(ctx, sig, [], { headcode: '1P00', trainClass: q.trainClass, origin: origin.id, destination: destination.id, platform: q.platform, dwellS: q.dwellS, planId: q.plan.id, model: q.stock.model, formation: q.stock.formation }, 'P', { ignorePlatformAvailability: true });
   if (!made.ok) return null;
   sig = made.sig;
   let trains: Train[] = [{ ...made.train, started: true }];

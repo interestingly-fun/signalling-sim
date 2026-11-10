@@ -97,7 +97,8 @@ describe('Simulation (headless, as driven by animation frames)', () => {
 
   test('reset removes the train, its occupancy and the routes it held; operator routes remain', () => {
     const sim = started();
-    drive(sim, 25, 60); // past D1, so the automatic movement D1>D2 is locked by the train
+    // run until the train is past D1 (the outer approach is long), so the automatic movement D1>D2 is locked by the train
+    for (let i = 0; i < 20000 && Object.keys(sim.getSig().residual).length === 0; i++) sim.stepOnce();
     assert.ok(Object.values(sim.getSig().network.sectionOccupancy).some((o) => o === 'T1'));
     assert.ok(Object.keys(sim.getSig().residual).length > 0, 'the train holds a route it has passed');
     sim.reset();

@@ -294,7 +294,7 @@ export class ShiftController {
 
       // 1. release the train at its scheduled entry time
       if (a.trainId === null && now >= svc.entryS) {
-        const r = this.sim.createScheduled({ headcode: svc.headcode, trainClass: svc.trainClass, origin: svc.origin, destination: svc.destination, platform: svc.platform, dwellS: svc.minDwellS, planId: svc.planId });
+        const r = this.sim.createScheduled({ headcode: svc.headcode, trainClass: svc.trainClass, origin: svc.origin, destination: svc.destination, platform: svc.platform, dwellS: svc.minDwellS, planId: svc.planId, model: svc.model, formation: svc.formation });
         if (r.ok) {
           a = { ...a, trainId: r.train.id, createdS: now };
           this.message('info', `${svc.headcode} is ready to enter from ${placeName(svc.origin)}.`, 'train');

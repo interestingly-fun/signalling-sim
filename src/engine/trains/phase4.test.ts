@@ -504,8 +504,9 @@ describe('M5 passing scenario: a stopping Class 2 in Platform 1, a Class 1 expre
     const a = get(w, '2A01');
     assert.equal(a.stop?.phase, 'departed');
     const dep = w.events.findIndex((e) => e.kind === 'departed');
-    const expressExit = w.events.findIndex((e) => e.kind === 'exited' && e.text.startsWith('1A02'));
-    assert.ok(dep >= 0 && expressExit >= 0 && expressExit < dep, 'the express was out of the area before the stopper departed');
+    // the express is clear of the junction (it has entered UP12, beyond the last points) before the stopper leaves; it need not have left the long exit section
+    const expressPast = w.events.findIndex((e) => e.kind === 'entered' && e.section === 'UP12' && e.text.startsWith('1A02'));
+    assert.ok(dep >= 0 && expressPast >= 0 && expressPast < dep, 'the express was clear of the junction before the stopper departed');
     assert.deepEqual(w.sig.residual, {}, 'nothing is still held by a train');
     assert.deepEqual(checkLockInvariants(ctx, w.sig), []);
   });
