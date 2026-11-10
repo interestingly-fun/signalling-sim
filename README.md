@@ -6,7 +6,7 @@ A browser-based simulator of a fictional modern British signalling control area,
 
 ## Status
 
-**Phase 6 – final integration, interface polish and operational quality of life: done, awaiting review.** Phases 1–5 are kept: the topology, interlocking, two-click routes, approaches and override are unchanged in behaviour. The one deliberate change to the interlocking is *sectional route release* (below).
+**Phase 8 – speed restrictions, realistic braking, section distances and concurrent traffic: done, awaiting review.** (Phases 1–7 are kept.) Phases 1–5 are kept: the topology, interlocking, two-click routes, approaches and override are unchanged in behaviour. The one deliberate change to the interlocking is *sectional route release* (below).
 
 | Implemented | Not yet implemented |
 | --- | --- |
@@ -53,6 +53,24 @@ A timetable is generated on load so it can be inspected; nothing runs until **St
 - **Shift history** is kept in the browser (last 8 shifts, including each shift's events) and can be reviewed (Summary / Service history / Events). *Forget saved shifts* deletes them. Unreadable saved data is ignored.
 - Reset on the diagram is refused while a shift is running; abandon the shift first.
 
+## Phase 8: speed limits, braking, distances and concurrent traffic
+
+- **Longer railway.** Section lengths are simulated metres, independent of how they are drawn: the outer approaches are about 3.4 km (UP and DOWN), the branch 2.4 km, the departures 2.5–3 km. The diagram is unchanged.
+- **Central speed limits** (`src/engine/speed/config.ts`): mainline 125 mph, branch 75, platform loop 45, diverging route 40 (crossovers and the branch-junction legs too). Edit the table there. A train's permitted speed is the most restrictive of its model's maximum and every section it occupies, front to rear, along the route actually set.
+- **Braking.** Trains slow for upcoming restrictions along a service-rate braking curve (v² = u² + 2as, planned at 90 % of the model's service braking) so they reach the limit at the start of the restricted section, without abrupt braking. Signal behaviour is unchanged; the approach speed to a Danger signal comes from the braking distance and the signal sequence, not from fixed yellow-aspect speeds.
+- **Overspeed is a warning only.** A train over its permitted speed is marked in the diagram, flagged in the inspector with speed, permitted speed and location, and logged once when it starts and once when it ends. It is never braked for it. For testing, the test-train form has an "Ignore speed limits (test)" box so the warning can be seen.
+- **Concurrent traffic.** The generator keeps the same 5–7 services but places them to overlap wherever the infrastructure allows (UP with DOWN, platform loops beside the mainline, the branch beside the mainline), using the lone-train section windows, train length and the diamond crossing as one resource. The fallback timetable overlaps too.
+- **Timetable and inspector.** A new "Held at signal" status; the inspector shows permitted speed, speed state, the next restriction with distance and braking distance, and a note when the signal ahead is restrictive.
+
+## Phase 7: rolling stock and performance
+
+- **Rolling-stock database** (`src/engine/rollingstock/models.ts`): nine models (Class 800, 221, 390, 142, 150, 170, 175, 387, 350), each with formations. Every formation has a real length, acceleration, service and emergency braking; every model has a maximum speed and an acceleration taper. Edit the data there; a consistency check (`validateRollingStock`) runs in the tests.
+- **Operating class and model are separate.** Class 1 only: 800, 221, 390 (mainline, never stop, no branch). Class 2 only: 142, 150, 170, 175. Class 387 and 350 work as Class 1 or 2, may use the branch, and as Class 1 stop at Ashcombe when the timetable says so. Class 5 (ECS) may be any model. Invalid combinations are refused with a reason.
+- **Length is physical.** A train occupies every section between its front and rear and releases each only once the rear has cleared it; it is not finished until its rear has left the exit boundary; platform fit uses the real length.
+- **Acceleration and braking** are per model and formation, in simulation time, stable at every speed multiplier. Speed limits are **not** enforced yet (Phase 8): trains run up to the model's top speed on any line.
+- **Timetables** choose a valid class, model and formation for each service (same size and class mix as before); older saved shifts without stock are given the default for their class.
+- **Inspector**: select a train to see identification, physical characteristics and current state (speed, acceleration, stopping distance, section, destination, station, signal ahead), updating live.
+
 ## Project structure
 
 ```
@@ -61,6 +79,8 @@ src/
     topology/            types, Ashcombe definition, validation, traversal, route derivation
     state/               point positions and occupancy, kept apart from topology
     signalling/          aspects, route setting, locks, points, release
+    rollingstock/        Phase 7: model and formation database, class compatibility
+    speed/               Phase 8: central speed limits, limit lookup, braking envelope
   layout/              Screen coordinates only, keyed by engine IDs. Pure TypeScript.
   engine/timetable/    Phase 5: services, generator, validator, delays, summary (pure, no UI)
   ui/                  React components (ui/sim/shift.ts is the shift controller)
