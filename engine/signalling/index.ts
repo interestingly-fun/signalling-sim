@@ -1,0 +1,11 @@
+export * from './types';
+export { createSignallingContext, opposingSection, type Direction, type RouteInfo, type SignallingContext } from './context';
+export { createSignallingState, isSectionOccupied, setTestOccupancy } from './state';
+export { lockRoute, unlockRoute, detachRoute, releaseCleared, isResidual, establishedRouteIds, checkLockInvariants } from './locks';
+export { pointBlock, pointPosition, movePoint, type PointBlock } from './points';
+export { validateRoute, establishRoute, requestRoute, routeLabel } from './routeSetting';
+export { validateCancel, cancelRoute, cancelRouteFrom } from './release';
+export { computeAspects, computeUnderlyingAspects, aspectBehind, isRouteProven, isAutomaticMovementClear } from './aspects';
+export { explainAspect, ASPECT_NAMES, type AspectExplanation } from './explain';
+export { signalOverride, setSignalOverride, forcedSignals } from './override';
+export { diffSignalling, type SignallingChange, type ChangeCategory } from './changes';
