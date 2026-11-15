@@ -111,7 +111,7 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
   const onCreate = () => {
     const r = sim.create({ headcode, trainClass: cls, origin, destination, platform: wantsStop ? platformId : null, dwellS: wantsStop ? dwell : 0, planId: plan?.id, model: model.id, formation: formation.id, ...(ignoreLimits ? { ignoreRestrictions: true } : {}) });
     if (r.ok) {
-      onMessage('ok', `Train ${r.train.spec.headcode} (Class ${cls}, ${stockLabel(stock)}) created outside ${origin}${wantsStop ? `, stopping at ${platformId} for ${dwell} s` : ', running through'}. Routes to set: ${r.plan.manual.join(', ') || 'none'}.`);
+      onMessage('ok', `Train ${r.train.spec.headcode} (Class ${cls}, ${stockLabel(stock)}) created outside ${origin}${wantsStop ? `, stopping at ${platformId} for ${dwell} s` : ', running through'}. Routes to set: ${r.plan.manual.map((m) => ctx.routeName(m)).join(', ') || 'none'}.`);
       setHeadcode(nextHeadcode(sim, cls));
     } else onMessage('error', r.reason);
   };
@@ -233,7 +233,7 @@ export function TrainPanel({ sim, onMessage, onPauseResume, onReset, shiftRunnin
           </label>
         </div>
         {!perms.canStop ? <p className="note">A {model.name} working as Class 1 never stops, never uses platform loops and never uses the branch. Class 387 and 350 can work as Class 1 with stops and the branch.</p> : null}
-        {plan && !problem ? <p className="note" data-testid="plan-moves">Signaller sets: {plan.manual.join(', ') || 'nothing'}.</p> : null}
+        {plan && !problem ? <p className="note" data-testid="plan-moves">Signaller sets: {plan.manual.map((m) => ctx.routeName(m)).join(', ') || 'nothing'}.</p> : null}
         {problem ? (
           <p className="note warn" role="alert" data-testid="create-problem">
             {problem}

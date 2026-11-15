@@ -1,4 +1,4 @@
-import { accelerationAt, computeAspects, frontSection, getFormation, getModel, classProfile, msToMph, rearSection, signalAhead, stockLabel, type Train } from '../../engine';
+import { accelerationAt, sidingCapacityM, occupiedSteps, computeAspects, frontSection, getFormation, getModel, classProfile, msToMph, rearSection, signalAhead, stockLabel, type Train } from '../../engine';
 import { placeName, type ShiftController } from '../sim/shift';
 import type { Simulation } from '../sim/simulation';
 import { useSlowFrame } from '../sim/useSlowFrame';
@@ -16,6 +16,12 @@ export function directionText(sim: Simulation, t: Train): string {
   return o === 'N-IN' ? 'Westbound' : 'Eastbound';
 }
 
+/** The live train with any part of it in the siding section (physical occupancy). */
+function sidingOcc2(net: { readonly sidings: ReadonlyMap<string, { readonly section: string }> }, trains: readonly Train[], sidingId: string): Train | null {
+  const sec = net.sidings.get(sidingId)?.section;
+  return (sec && trains.find((x) => !x.finished && occupiedSteps(x).some((i) => x.path[i]?.section === sec))) || null;
+}
+
 const aspectName = (a: string): string => (a === 'red' ? 'Danger' : a === 'yellow' ? 'Yellow' : a === 'double-yellow' ? 'Double yellow' : 'Green');
 const aspectNote = (a: string): string => (a === 'red' ? 'stop at this signal' : a === 'yellow' ? 'next signal may be at Danger' : 'preparing for a more restrictive signal');
 
@@ -31,7 +37,7 @@ function speedState(t: Train): string {
 const stopText = (t: Train, plat: (id: string) => string): string => {
   const s = t.stop;
   if (!s) return 'Runs through (no stop)';
-  const name = plat(s.platform);
+  const name = s.scheduledPlatform !== s.platform ? `${plat(s.platform)} (planned ${plat(s.scheduledPlatform)})` : plat(s.platform);
   if (s.phase === 'pending') return `${name}: not yet stopped`;
   if (s.phase === 'dwelling') return `${name}: dwelling, ${Math.ceil(s.remainingS)} s left of ${s.dwellS} s`;
   if (s.phase === 'done') return `${name}: dwell finished`;
@@ -59,6 +65,8 @@ export function TrainPerformance({ sim, shift, train: t }: { sim: Simulation; sh
   const front = live ? frontSection(t) : null;
   const rear = live ? rearSection(t) : null;
   const next = live ? t.speedInfo.next : null;
+  const job = t.ecs;
+  const sidingOcc = job ? sidingOcc2(ctx.net, sim.trains, job.siding) : null;
   const status = sim.isPaused && live && t.started ? 'paused' : t.status;
   return (
     <section className="train-details perf" aria-label="Selected train" data-testid="train-details">
@@ -154,7 +162,7 @@ export function TrainPerformance({ sim, shift, train: t }: { sim: Simulation; sh
         <dd data-testid="ro-ahead">
           {ahead ? (
             <>
-              {ahead.signal} · {aspectName(ahead.aspect)} · {Math.round(ahead.distanceM)} m
+              {ctx.signalName(ahead.signal)} · {aspectName(ahead.aspect)} · {Math.round(ahead.distanceM)} m
               {ahead.aspect !== 'green' ? <span className="caution" data-testid="ro-restrictive"> · {aspectNote(ahead.aspect)}</span> : null}
             </>
           ) : live ? (
@@ -170,6 +178,45 @@ export function TrainPerformance({ sim, shift, train: t }: { sim: Simulation; sh
           </>
         ) : null}
       </dl>
+
+      {job ? (
+        <>
+          <h4>ECS / siding (testing)</h4>
+          <dl className="train-readout" data-testid="ro-ecs">
+            <dt>ECS stage</dt>
+            <dd data-testid="ro-ecs-stage">{job.stage}</dd>
+            <dt>Reversal</dt>
+            <dd data-testid="ro-ecs-reversal">
+              {job.reversal ? `${job.reversal.phase} at ${job.reversal.bay}${job.reversal.phase === 'reversing' ? ` (${Math.ceil(job.reversal.remainingS)} s)` : ''}${job.reversal.note ? ` · ${job.reversal.note}` : ''}` : `none (${job.reversals} done)`}
+            </dd>
+            <dt>Direction</dt>
+            <dd>{live ? directionText(sim, t) : '—'}</dd>
+            <dt>Assigned siding</dt>
+            <dd data-testid="ro-ecs-siding">{ctx.net.sidings.get(job.siding)?.name ?? job.siding}</dd>
+            <dt>Siding occupancy</dt>
+            <dd data-testid="ro-ecs-occupancy">
+              {sidingOcc ? `occupied by ${sidingOcc.spec.headcode}` : 'empty'} · {spec.lengthM} m train / {sidingCapacityM(ctx.net, job.siding)} m capacity
+            </dd>
+            <dt>Stabling timer</dt>
+            <dd data-testid="ro-ecs-timer">
+              {job.stage === 'stabled' ? `${Math.ceil(job.stablingRemainingS)} s left of ${job.stablingS} s` : job.stage === 'inbound' ? `${job.stablingS} s planned` : 'finished'}
+            </dd>
+            <dt>Incoming service</dt>
+            <dd data-testid="ro-ecs-in">{job.incomingHeadcode} · Class 5 ECS</dd>
+            <dt>Outgoing service</dt>
+            <dd data-testid="ro-ecs-out">
+              {job.onward.headcode} · Class {job.onward.trainClass} · to {placeName(job.onward.destination)}
+              {job.stage === 'inbound' || job.stage === 'stabled' ? <span className="muted"> (applied at departure preparation)</span> : null}
+            </dd>
+            {job.note ? (
+              <>
+                <dt>Waiting</dt>
+                <dd data-testid="ro-ecs-note">{job.note}</dd>
+              </>
+            ) : null}
+          </dl>
+        </>
+      ) : null}
     </section>
   );
 }

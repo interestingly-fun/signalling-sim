@@ -383,6 +383,18 @@ dl {
 .boundary-arrow {
   fill: #b7c4d4;
 }
+/* Buffer stops: the destination of a route into a siding. Clickable once an entrance is chosen. */
+.boundary.buffer .buffer-hit {
+  fill: transparent;
+}
+.boundary.buffer.destination {
+  cursor: pointer;
+}
+.boundary.buffer.destination .boundary-bar {
+  stroke: var(--accent, #6ea8ff);
+  stroke-width: 4.5;
+  filter: drop-shadow(0 0 4px var(--accent, #6ea8ff));
+}
 
 .point-dot {
   fill: var(--bg-diagram);
@@ -454,6 +466,26 @@ dl {
 }
 .lamp.green {
   fill: var(--lamp-green);
+}
+/* Shunting signals (Phase 9): a triangle pointing the way it governs; red = Stop, green = Proceed. */
+.shunt-tri {
+  stroke: #05080b;
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+.shunt-tri.stop {
+  fill: var(--lamp-red);
+}
+.shunt-tri.proceed {
+  fill: var(--lamp-green);
+  filter: drop-shadow(0 0 3px var(--lamp-green));
+}
+.signal.shunting.selected .shunt-tri {
+  stroke: var(--accent);
+  stroke-width: 1.8;
+}
+.signal.shunting .signal-label {
+  fill: #c7b8ff;
 }
 .signal-label {
   font-family: var(--mono);
@@ -565,6 +597,29 @@ button.primary:disabled {
 }
 .signal.destination .signal-target {
   stroke-dasharray: 3 3;
+}
+/* ---- Phase 10.5: smooth aspect changes (drawing only) -------------------------------------------------
+   Every lamp of a signal head is always in the drawing; only the lit one is visible. A lamp that stops being lit fades out
+   quickly, then the newly lit lamp fades in (so two different aspects are never both visible), about 200 ms in all. CSS
+   re-targets a transition that is interrupted, so the picture always heads for the newest logical aspect. The simulation never
+   reads any of this. With reduced motion the change is immediate. */
+.signal .lamp:not(.lit),
+.signal .shunt-tri:not(.lit) {
+  opacity: 0;
+}
+.signal .lamp.lit,
+.signal .shunt-tri.lit {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .signal .lamp,
+  .signal .shunt-tri {
+    transition: opacity 90ms ease-out 0ms;
+  }
+  .signal .lamp.lit,
+  .signal .shunt-tri.lit {
+    transition: opacity 110ms ease-in 90ms;
+  }
 }
 @media (prefers-reduced-motion: no-preference) {
   .signal.destination .signal-target {
@@ -1083,3 +1138,41 @@ button.mini { font-size: 11px; padding: 0 7px; }
 .perf-warn { margin: 4px 0 6px; padding: 4px 8px; border: 1px solid #ff4d4d; border-radius: 4px; background: rgba(255, 77, 77, 0.14); color: #ffb3b3; font-size: 12px; font-weight: 600; }
 .perf dd.over { color: #ff8a80; font-weight: 700; }
 .perf dd .caution { color: #ffcf5a; }
+
+/* ---- Phase 8.5: diagram stage, zoom/pan, overlays, optional areas ---- */
+.diagram-stage { position: relative; overflow: hidden; border-radius: 4px; }
+.diagram-stage .diagram { display: block; width: 100%; height: auto; cursor: grab; touch-action: none; user-select: none; }
+.diagram-stage .diagram.panning { cursor: grabbing; }
+.hud { position: absolute; z-index: 3; top: 8px; }
+.hud-left { left: 8px; }
+.hud-right { right: 8px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.toggle-btn { font-size: 11px; padding: 4px 10px; background: rgba(12, 18, 24, 0.85); border: 1px solid #3a4a5a; color: #cfd8e0; border-radius: 3px; cursor: pointer; }
+.toggle-btn:hover { border-color: #6f8fb0; }
+.toggle-btn.on { border-color: #4fa37a; color: #b9f0d4; }
+.compact-inspector { margin: 0; min-width: 150px; max-width: 230px; padding: 6px 10px; background: rgba(10, 15, 20, 0.88); border: 1px solid #34465a; border-radius: 4px; font-size: 12px; pointer-events: none; }
+.compact-inspector > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.5; }
+.compact-inspector dt { color: #8a9bab; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; align-self: center; }
+.compact-inspector dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.compact-inspector .ci-head dd { font-weight: 700; font-size: 14px; letter-spacing: 0.05em; }
+.compact-inspector .ci-empty { color: #8a9bab; font-size: 12px; }
+.diagram-nav { position: absolute; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 4px; padding: 3px; background: rgba(10, 15, 20, 0.85); border: 1px solid #34465a; border-radius: 4px; }
+.diagram-nav button { min-width: 26px; height: 24px; font-size: 13px; padding: 0 6px; }
+.diagram-nav .zoom-level { min-width: 42px; text-align: center; font-size: 11px; color: #9fb0c0; font-variant-numeric: tabular-nums; }
+.diagram-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 6px 4px 0; font-size: 12px; }
+.feedback { display: flex; gap: 10px; align-items: center; flex: 1 1 260px; min-width: 0; }
+.feedback-msg.error { color: #ff9a8a; }
+.feedback-msg.ok { color: #8fe0b0; }
+.feedback-route button { margin-left: 8px; }
+.lower.no-log { grid-template-columns: 1fr; }
+.testing { margin-top: 12px; }
+.testing-title { font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: #9fb0c0; margin: 0 0 8px; }
+details.panel > summary { cursor: pointer; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: #9fb0c0; padding: 4px 0; }
+.app-disclaimer { margin-top: 10px; }
+.plat-changed { color: #e8c86a; }
+.feedback { overflow: hidden; }
+.feedback-msg { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-route { white-space: nowrap; }
+.gen-info { font-size: 12px; color: var(--text-dim); display: grid; gap: 4px; }
+.gen-info strong { color: var(--text); }
+.gen-info ul { margin: 4px 0 0 18px; padding: 0; }
+.gen-warn { color: #ffb74d; }

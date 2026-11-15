@@ -29,6 +29,12 @@ export interface TrackPath {
   at(m: number): { readonly at: Pt; readonly dir: Pt };
   /** The drawn polyline between two distances (either may be outside the path), in travel order. */
   between(fromM: number, toM: number): Pt[];
+  /**
+   * The drawn polyline of a fixed DRAWN length (SVG units) ending at logical distance `m` and running back along the
+   * track. Its size on screen does not depend on how long the sections are in metres (Phase 8.5), so it is the
+   * representation of a train whose nose is exactly at `m`.
+   */
+  trailing(m: number, drawnLen: number): Pt[];
 }
 
 const lerp = (a: Pt, b: Pt, f: number): Pt => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
@@ -107,22 +113,26 @@ export function buildTrackPath(net: Network, layout: LayoutDef, steps: readonly 
     return { at: lerp(a, b, seg === 0 ? 0 : (s - s0) / seg), dir: u };
   };
 
+  const polyBetweenArcs = (s0: number, s1: number): Pt[] => {
+    const lo = Math.min(s0, s1);
+    const hi = Math.max(s0, s1);
+    const out: Pt[] = [atArc(lo).at];
+    for (let i = 0; i < poly.length; i++) {
+      const a = arc[i] ?? 0;
+      const v = poly[i];
+      if (v && a > lo + EPS && a < hi - EPS) out.push(v);
+    }
+    out.push(atArc(hi).at);
+    return s0 <= s1 ? out : out.reverse();
+  };
+
   return {
     totalM: metres,
     at: (m) => atArc(arcFor(m)),
-    between(fromM, toM) {
-      const s0 = arcFor(fromM);
-      const s1 = arcFor(toM);
-      const lo = Math.min(s0, s1);
-      const hi = Math.max(s0, s1);
-      const out: Pt[] = [atArc(lo).at];
-      for (let i = 0; i < poly.length; i++) {
-        const a = arc[i] ?? 0;
-        const v = poly[i];
-        if (v && a > lo + EPS && a < hi - EPS) out.push(v);
-      }
-      out.push(atArc(hi).at);
-      return s0 <= s1 ? out : out.reverse();
+    between: (fromM, toM) => polyBetweenArcs(arcFor(fromM), arcFor(toM)),
+    trailing(m, drawnLen) {
+      const s1 = arcFor(m);
+      return polyBetweenArcs(s1 - Math.max(0, drawnLen), s1);
     },
   };
 }

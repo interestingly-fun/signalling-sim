@@ -46,7 +46,7 @@ function validActual(v: unknown): v is ServiceActual {
   return (
     isRec(v) &&
     strOrNull(v.trainId) && numOrNull(v.createdS) && numOrNull(v.entryS) && numOrNull(v.arrivalS) && numOrNull(v.readyS) &&
-    numOrNull(v.departureS) && numOrNull(v.passS) && numOrNull(v.exitS) && numOrNull(v.cancelledS) && strOrNull(v.failedReason)
+    numOrNull(v.departureS) && numOrNull(v.passS) && numOrNull(v.exitS) && numOrNull(v.cancelledS) && strOrNull(v.failedReason) && (v.actualPlatform === undefined || strOrNull(v.actualPlatform))
   );
 }
 
@@ -130,17 +130,17 @@ export interface ShiftStore {
 }
 
 /** A store over localStorage (or a fake). Failures are logged to the console only. */
-export function localShiftStore(getStore: () => KeyValueStore | null = () => (typeof localStorage === 'undefined' ? null : localStorage)): ShiftStore {
+export function localShiftStore(getStore: () => KeyValueStore | null = () => (typeof localStorage === 'undefined' ? null : localStorage), key: string = STORAGE_KEY): ShiftStore {
   return {
     load() {
       try {
         const store = getStore();
         if (!store) return [];
-        const text = store.getItem(STORAGE_KEY);
+        const text = store.getItem(key);
         const shifts = parseShifts(text);
         if (text && shifts.length === 0) {
           console.warn('Ashcombe: saved shift history was unreadable and has been discarded.');
-          store.removeItem(STORAGE_KEY);
+          store.removeItem(key);
         }
         return shifts;
       } catch (e) {
@@ -150,7 +150,7 @@ export function localShiftStore(getStore: () => KeyValueStore | null = () => (ty
     },
     save(history) {
       try {
-        getStore()?.setItem(STORAGE_KEY, serialiseShifts(history));
+        getStore()?.setItem(key, serialiseShifts(history));
       } catch (e) {
         console.warn('Ashcombe: shift history could not be saved.', e);
       }

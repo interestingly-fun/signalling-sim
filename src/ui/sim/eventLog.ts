@@ -145,9 +145,9 @@ export function attachLogging(sim: Simulation, log: EventLog, shiftRunning: () =
       if (e.kind === 'released') {
         // Automatic movements are released after every train: only routes the signaller set are worth a line.
         const route = sim.ctx.route(e.route);
-        if (route && sim.ctx.net.signals.get(route.from)?.type === 'manual') log.add('route', 'info', e.text);
+        if (route && sim.ctx.net.signals.get(route.from)?.type !== 'automatic') log.add('route', 'info', e.text);
       }
-      else log.add('train', e.kind === 'protection-stop' ? 'error' : e.kind === 'stopped' || e.kind === 'overspeed' ? 'warn' : 'info', e.text);
+      else log.add('train', e.kind === 'protection-stop' ? 'error' : e.kind === 'stopped' || e.kind === 'overspeed' || (e.kind === 'ecs' && e.what === 'blocked') ? 'warn' : 'info', e.text);
     }
   });
   return () => {

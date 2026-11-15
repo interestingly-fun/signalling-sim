@@ -27,9 +27,9 @@ export function useSimulation(ctx: SignallingContext, initial: () => SignallingS
 }
 
 /** The shift controller for a simulation: created once, bound to its clock and trains. */
-export function useShift(sim: Simulation): ShiftController {
+export function useShift(sim: Simulation, storageKey?: string): ShiftController {
   const [shift] = useState(() => {
-    const c = new ShiftController(sim, localShiftStore());
+    const c = new ShiftController(sim, localShiftStore(undefined, storageKey));
     c.generate(1); // a timetable to inspect from the start; nothing runs until Start shift
     return c;
   });

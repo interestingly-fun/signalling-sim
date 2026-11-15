@@ -28,7 +28,7 @@ export function OperationsStrip({ ctx, sim, shift, sig }: Props) {
   const approaching = pick(APPROACHING);
   const held = pick(HELD);
   const platform = pick(AT_PLATFORM);
-  const routes = Object.values(sig.routes).map((id) => ctx.route(id)).filter((r) => r !== undefined).map((r) => `${r.from}→${r.to}`);
+  const routes = Object.values(sig.routes).map((id) => ctx.route(id)).filter((r) => r !== undefined).map((r) => ctx.routeName(r.id).replace(' → ', '→'));
   const locked = Object.keys(sig.pointLocks).sort();
   const forced = forcedSignals(sig);
   const occupied = Object.entries(sig.network.sectionOccupancy).filter(([, v]) => v !== null).map(([k]) => k).sort();

@@ -3,7 +3,7 @@
  * through the real interlocking (requestRoute), so whole shifts can be run headlessly. It is not
  * part of the application.
  */
-import { requestRoute } from '../../engine';
+import { nextEcsMovement, requestRoute } from '../../engine';
 import type { Train } from '../../engine';
 import type { Simulation } from './simulation';
 import type { ShiftController } from './shift';
@@ -49,6 +49,20 @@ export function attachBot(sim: Simulation, shift: ShiftController, options: BotO
       if (!train) continue;
       const set = done.get(svc.id) ?? new Set<string>();
       done.set(svc.id, set);
+      if (svc.ecs) {
+        // ECS siding cycle: the next movement the train's state allows (one ahead; reversals and the departure when ready).
+        const sig = sim.getSig();
+        const next = nextEcsMovement(sim.ctx, sig, train, set);
+        const r = next ? sim.ctx.route(next.movement) : undefined;
+        if (next && r && !options.skip?.(next.movement, svc.headcode)) {
+          const res = requestRoute(sim.ctx, sig, r.from, r.to, r.id);
+          if (res.ok) {
+            sim.setSig(res.state);
+            set.add(next.key);
+          }
+        }
+        continue;
+      }
       // A train standing in a platform has its departure route set only as the dwell runs out.
       if (train.stop?.phase === 'dwelling' && train.stop.remainingS > 20) continue;
       for (const m of svc.manual) {

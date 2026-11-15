@@ -37,7 +37,7 @@ describe('entrance-to-exit selection', () => {
     assert.deepEqual(u.ui, start);
     assert.equal(u.state, undefined);
     assert.equal(u.message?.kind, 'error');
-    assert.equal(u.message?.text, 'Invalid movement: no valid connection between U3 and D1.');
+    assert.equal(u.message?.text, 'Invalid movement: no valid connection between AJ02 and AJ107.');
   });
 
   test('clicking another manual signal that is not an exit starts a different selection', () => {

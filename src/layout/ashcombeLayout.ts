@@ -9,6 +9,8 @@
  *
  * The drawing is schematic, not to scale. West is left, north is up.
  *
+ *   y =  70   Ashcombe Siding 1 (north-east, Phase 9)
+ *   y = 120   Ashcombe Siding 2 and the siding lead
  *   y = 130   Platform 1 loop (north of the UP main)
  *   y = 190   UP main   (eastbound, left to right)
  *   y = 290   DOWN main (westbound, right to left)
@@ -35,8 +37,11 @@ const sections: Record<string, readonly Pt[]> = {
   UP8: [P(800, 190), P(980, 190)],
   UP9: [P(980, 190), P(1150, 190)],
   UP10: [P(1150, 190), P(1330, 190)],
-  UP11: [P(1330, 190), P(1410, 190)],
-  UP12: [P(1410, 190), P(1540, 190)],
+  UP11: [P(1330, 190), P(1380, 190)],
+  UP11B: [P(1380, 190), P(1410, 190)],
+  UP12W: [P(1410, 190), P(1450, 190)],
+  UPX: [P(1450, 190), P(1490, 190)], // diamond, UP main side
+  UP12: [P(1490, 190), P(1540, 190)],
   UPW2: [P(-120, 190), P(-40, 190)],
   UPW1: [P(-40, 190), P(40, 190)],
   UPE1: [P(1540, 190), P(1620, 190)],
@@ -70,6 +75,20 @@ const sections: Record<string, readonly Pt[]> = {
   // Crossovers ("\" in the west, "/" in the east) --------------------------------
   XW: [P(610, 190), P(710, 290)],
   XE: [P(1230, 290), P(1330, 190)],
+
+  // Ashcombe Sidings (north-east; ECS only) ---------------------------------------
+  // The siding lead leaves the DOWN main at SLP (1370, 290), crosses the UP main on a diamond at (1470, 190) and
+  // reaches the sidings by SLN (1540, 120). A second lead, LU1/LU2, comes off the UP main at SLU (1380, 190).
+  LS1: [P(1370, 290), P(1440, 220)],
+  LSX: [P(1440, 220), P(1500, 160)], // diamond, siding lead side
+  LS3: [P(1500, 160), P(1580, 80)],
+  LU1: [P(1380, 190), P(1400, 170)],
+  LU2: [P(1400, 170), P(1490, 80), P(1580, 80)],
+  LS2: [P(1580, 80), P(1640, 80)],
+  ENT2: [P(1640, 80), P(1700, 80)],
+  SD2: [P(1700, 80), P(1830, 80)],
+  ENT1: [P(1640, 80), P(1700, 10)],
+  SD1: [P(1700, 10), P(1830, 10)],
 
   // Branch ---------------------------------------------------------------------
   BRM3: [P(-200, 440), P(-120, 440)],
@@ -107,6 +126,20 @@ const sectionLabelOffsets: Record<string, readonly [number, number]> = {
   P2W: [-14, 12],
   P2E: [14, 12],
   // diagonals
+  LS1: [16, 6],
+  LSX: [24, -4],
+  LS3: [14, 6],
+  LU1: [-4, -36],
+  LU2: [0, -8],
+  LS2: [0, 14],
+  ENT1: [-14, -4],
+  ENT2: [0, 14],
+  SD1: [40, 14],
+  SD2: [40, 14],
+  UP11: [0, -9],
+  UP11B: [0, 14],
+  UP12W: [0, 14],
+  UPX: [0, 14],
   XW: [-14, 4],
   XE: [14, 4],
   LA3: [14, 8],
@@ -127,12 +160,22 @@ const pointLabelOffsets: Record<string, readonly [number, number]> = {
   PW2: [-6, -20],
   PE2: [6, -20],
   EXD: [0, 22],
+  SLP: [-24, 22],
+  SLU: [-24, 22],
+  SLN: [0, -18],
+  STP: [-4, -18],
+};
+
+/** AJ4 stands 30 units from AJ103: its label is nudged west so the two names do not touch. */
+const signalLabelOffsets: Record<string, readonly [number, number]> = {
+  S4: [-16, -3],
 };
 
 export const ashcombeLayout: LayoutDef = {
   width: 1600,
   marginLeft: 220,
-  marginRight: 150,
+  marginTop: 70,
+  marginRight: 310,
   height: 540,
   sections,
   platforms: {
@@ -141,10 +184,14 @@ export const ashcombeLayout: LayoutDef = {
   },
   sectionLabelOffsets,
   pointLabelOffsets,
+  signalLabelOffsets,
   labels: [
     { text: 'ASHCOMBE JUNCTION', x: 975, y: 62, anchor: 'middle', size: 'xl' },
     { text: 'PLATFORM 1', x: 975, y: 147, anchor: 'middle', size: 'sm' },
     { text: 'PLATFORM 2', x: 975, y: 342, anchor: 'middle', size: 'sm' },
+    { text: 'ASHCOMBE SIDINGS — ECS ACCESS ONLY', x: 1830, y: 140, anchor: 'end', size: 'sm' },
+    { text: 'Ashcombe Siding 1', x: 1790, y: 40, anchor: 'middle', size: 'sm' },
+    { text: 'Ashcombe Siding 2', x: 1790, y: 110, anchor: 'middle', size: 'sm' },
 
     { text: 'WESTFORD', x: -116, y: 232, anchor: 'start', size: 'lg' },
     { text: 'DOWN boundary', x: -116, y: 248, anchor: 'start', size: 'sm' },
@@ -153,8 +200,8 @@ export const ashcombeLayout: LayoutDef = {
     { text: 'MEREFIELD', x: -196, y: 512, anchor: 'start', size: 'lg' },
     { text: 'BRANCH boundary', x: -196, y: 528, anchor: 'start', size: 'sm' },
 
-    { text: 'UP MAIN  →', x: 48, y: 166, anchor: 'start', size: 'sm' },
-    { text: '←  DOWN MAIN', x: 48, y: 322, anchor: 'start', size: 'sm' },
-    { text: 'BRANCH', x: 48, y: 422, anchor: 'start', size: 'sm' },
+    { text: 'UP MAIN  →', x: 66, y: 166, anchor: 'start', size: 'sm' },
+    { text: '←  DOWN MAIN', x: 66, y: 322, anchor: 'start', size: 'sm' },
+    { text: 'BRANCH', x: 66, y: 422, anchor: 'start', size: 'sm' },
   ],
 };

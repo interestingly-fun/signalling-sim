@@ -267,7 +267,7 @@ describe('completion and summary', () => {
       assert.ok(Math.abs(m.avgExitDelayS! - exitDelays.reduce((a, b) => a + b, 0) / n) < 1e-9);
       assert.ok(Math.abs(m.totalDelayS - exitDelays.filter((d) => d > 0).reduce((a, b) => a + b, 0)) < 1e-9);
       // timing in the shift agrees with the timetable the generator built (within the rounding of the schedule)
-      for (const r of rows) assert.ok(Math.abs(r.delays.exit!) < 15, `${r.service.headcode} exit delay ${r.delays.exit}`);
+      for (const r of rows) assert.ok(Math.abs(r.delays.exit!) < (r.service.ecs ? 40 : 15), `${r.service.headcode} exit delay ${r.delays.exit}`);
     }
   });
 

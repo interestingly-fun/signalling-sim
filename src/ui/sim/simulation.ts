@@ -15,7 +15,13 @@
 
 import {
   FixedStepClock,
+  createEcsTrain,
+  createTerminalTrain,
+  type TerminalCreateResult,
+  type TerminalRequest,
   createTrain,
+  type EcsCreateResult,
+  type EcsRequest,
   removeAll,
   removeTrain,
   stepFleet,
@@ -183,6 +189,38 @@ export class Simulation {
     const train = { ...r.train, started: true, holdReason: '' };
     this.fleet = [...this.fleet, train];
     this.plans.set(train.id, r.plan);
+    this.previousFront.set(train.id, train.frontM);
+    this.setSig(r.sig);
+    this.notifyFrame();
+    return { ...r, train };
+  }
+
+  /** Phase 9: creates a scheduled ECS siding cycle. Like `createScheduled`, nothing is refused because of what other trains are doing. */
+  createEcsScheduled(req: EcsRequest): EcsCreateResult {
+    this.counter++;
+    const r = createEcsTrain(this.ctx, this.sigState, this.fleet, req, `T${this.counter}`);
+    if (!r.ok) {
+      this.counter--;
+      return r;
+    }
+    const train = { ...r.train, started: true, holdReason: '' };
+    this.fleet = [...this.fleet, train];
+    this.previousFront.set(train.id, train.frontM);
+    this.setSig(r.sig);
+    this.notifyFrame();
+    return { ...r, train };
+  }
+
+  /** Northbridge: creates a scheduled terminating service (arrive, dwell, change ends, depart). */
+  createTerminalScheduled(req: TerminalRequest): TerminalCreateResult {
+    this.counter++;
+    const r = createTerminalTrain(this.ctx, this.sigState, this.fleet, req, `T${this.counter}`);
+    if (!r.ok) {
+      this.counter--;
+      return r;
+    }
+    const train = { ...r.train, started: true, holdReason: '' };
+    this.fleet = [...this.fleet, train];
     this.previousFront.set(train.id, train.frontM);
     this.setSig(r.sig);
     this.notifyFrame();

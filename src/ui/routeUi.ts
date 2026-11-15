@@ -20,7 +20,9 @@ import {
   requestRoute,
   validateCancel,
   validateRoute,
+  validateRouteForTrains,
   type DerivedRoute,
+  type Train,
   type SignallingContext,
   type SignallingState,
 } from '../engine';
@@ -63,7 +65,7 @@ export function describeProposal(ctx: SignallingContext, state: SignallingState,
   if (rejection) return { kind: 'error', text: rejection.message };
   return {
     kind: 'info',
-    text: `Proposed route ${route.from} → ${route.to} over ${route.sections.join(' › ')} (points: ${pointsText(route)}). Click exit signal ${route.to} to set it.`,
+    text: `Proposed route ${ctx.routeName(route.id)} over ${route.sections.join(' › ')} (points: ${pointsText(route)}). Click exit signal ${ctx.signalName(route.to)} to set it.`,
   };
 }
 
@@ -72,22 +74,22 @@ export const destinationsFor = (ctx: SignallingContext, entrance: string | null)
   entrance === null ? [] : [...new Set(ctx.from(entrance).map((r) => r.to))];
 
 /** The player clicked a signal on the diagram. */
-export function clickSignal(ctx: SignallingContext, state: SignallingState, ui: RouteUi, signalId: string): UiUpdate {
+export function clickSignal(ctx: SignallingContext, state: SignallingState, ui: RouteUi, signalId: string, trains: readonly Train[] = []): UiUpdate {
   const signal = ctx.net.signals.get(signalId);
   if (!signal) return { ui };
 
   if (ui.entrance === null) {
     if (signal.type === 'automatic') {
-      return { ui, message: { kind: 'info', text: `Signal ${signalId} is automatic. Its aspect is set by the signalling system; routes cannot be set from it.` } };
+      return { ui, message: { kind: 'info', text: `Signal ${ctx.signalName(signalId)} is automatic. Its aspect is set by the signalling system; routes cannot be set from it.` } };
     }
     const existing = state.routes[signalId];
     if (existing !== undefined) {
       return {
         ui: { entrance: signalId, routeId: existing },
-        message: { kind: 'info', text: `Signal ${signalId} has route ${existing} established. Use “Cancel route” to release it.` },
+        message: { kind: 'info', text: `Signal ${ctx.signalName(signalId)} has route ${ctx.routeName(existing)} established. Use “Cancel route” to release it.` },
       };
     }
-    return { ui: { entrance: signalId, routeId: null }, message: { kind: 'info', text: `Entrance ${signalId} selected. Click the exit signal you want to route to.` } };
+    return { ui: { entrance: signalId, routeId: null }, message: { kind: 'info', text: `Entrance ${ctx.signalName(signalId)} selected. Click the exit signal you want to route to.` } };
   }
 
   // an entrance is already chosen
@@ -96,10 +98,21 @@ export function clickSignal(ctx: SignallingContext, state: SignallingState, ui: 
   const first = ctx.between(ui.entrance, signalId)[0];
   if (!first) {
     // A different manual signal that is not a destination starts a new selection instead.
-    if (signal.type === 'manual') return clickSignal(ctx, state, emptyRouteUi, signalId);
-    return { ui, message: { kind: 'error', text: `Invalid movement: no valid connection between ${ui.entrance} and ${signalId}.` } };
+    if (signal.type !== 'automatic') return clickSignal(ctx, state, emptyRouteUi, signalId, trains);
+    return { ui, message: { kind: 'error', text: `Invalid movement: no valid connection between ${ctx.signalName(ui.entrance)} and ${ctx.signalName(signalId)}.` } };
   }
-  return establishMovement(ctx, state, ui, first.id);
+  return establishMovement(ctx, state, ui, first.id, trains);
+}
+
+/** The player clicked the buffer stops of a siding: the exit of a route into it from the chosen entrance (AJ1 or AJ4). */
+export function clickBuffer(ctx: SignallingContext, state: SignallingState, ui: RouteUi, boundaryId: string, trains: readonly Train[] = []): UiUpdate {
+  const name = ctx.net.boundaries.get(boundaryId)?.name ?? boundaryId;
+  if (ui.entrance === null) {
+    return { ui, message: { kind: 'info', text: `${name}: choose the entrance signal first (AJ1 or AJ4), then click the buffer stops of the siding.` } };
+  }
+  const first = ctx.between(ui.entrance, boundaryId)[0];
+  if (!first) return { ui, message: { kind: 'error', text: `Invalid movement: ${ctx.signalName(ui.entrance)} has no route to the ${name}. Route to the associated shunting signal first, then click the buffer stops.` } };
+  return establishMovement(ctx, state, ui, first.id, trains);
 }
 
 /**
@@ -107,11 +120,21 @@ export function clickSignal(ctx: SignallingContext, state: SignallingState, ui: 
  * Success clears the selection. Refusal keeps the entrance and shows the
  * refused movement as blocked, with the interlocking's own reason.
  */
-export function establishMovement(ctx: SignallingContext, state: SignallingState, ui: RouteUi, routeId: string): UiUpdate {
+export function establishMovement(ctx: SignallingContext, state: SignallingState, ui: RouteUi, routeId: string, trains: readonly Train[] = []): UiUpdate {
   const route = ctx.route(routeId);
   if (!route) return { ui, message: { kind: 'error', text: `Invalid movement: route ${routeId} does not exist.` } };
+  const refused = validateRouteForTrains(ctx, state, trains, route.id);
+  if (refused) return { ui: { entrance: route.from, routeId: route.id }, message: { kind: 'error', text: refused.message } };
   const result = requestRoute(ctx, state, route.from, route.to, route.id);
   if (!result.ok) return { ui: { entrance: route.from, routeId: route.id }, message: { kind: 'error', text: result.rejection.message } };
+  if (route.shuntAccess) {
+    // The access route only authorises the shunting movement once its shunting signal has a route: carry on from that signal.
+    return {
+      ui: { entrance: route.to, routeId: null },
+      state: result.state,
+      message: { kind: 'ok', text: `${result.message} Shunting signal ${ctx.signalName(route.to)} is now the entrance: click the siding buffer stops to set the shunting route.` },
+    };
+  }
   return { ui: emptyRouteUi, state: result.state, message: { kind: 'ok', text: result.message } };
 }
 
@@ -121,19 +144,21 @@ export function previewMovement(ctx: SignallingContext, state: SignallingState, 
   if (!route) return { ui: emptyRouteUi };
   const established = state.routes[route.from] === route.id;
   if (established) {
-    return { ui: { entrance: route.from, routeId }, message: { kind: 'info', text: `Route ${route.from} → ${route.to} is established.` } };
+    return { ui: { entrance: route.from, routeId }, message: { kind: 'info', text: `Route ${ctx.routeName(route.id)} is established.` } };
   }
   return { ui: { entrance: route.from, routeId }, message: describeProposal(ctx, state, route) };
 }
 
 /** "Set route": ask the interlocking to establish the proposed movement. */
-export function submitRoute(ctx: SignallingContext, state: SignallingState, ui: RouteUi): OperationUpdate {
+export function submitRoute(ctx: SignallingContext, state: SignallingState, ui: RouteUi, trains: readonly Train[] = []): OperationUpdate {
   if (ui.entrance === null || ui.routeId === null) {
     return { state, ui, message: { kind: 'error', text: 'Choose an entrance signal and an exit signal first.' } };
   }
   const route = ctx.route(ui.routeId);
   if (!route) return { state, ui, message: { kind: 'error', text: `Invalid movement: route ${ui.routeId} does not exist.` } };
 
+  const refused = validateRouteForTrains(ctx, state, trains, route.id);
+  if (refused) return { state, ui, message: { kind: 'error', text: refused.message } };
   const result = requestRoute(ctx, state, route.from, route.to, route.id);
   if (!result.ok) return { state, ui, message: { kind: 'error', text: result.rejection.message } };
   return { state: result.state, ui: emptyRouteUi, message: { kind: 'ok', text: result.message } };

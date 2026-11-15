@@ -122,7 +122,7 @@ describe('logging from a whole shift', () => {
     const texts = shift.log.record.map((e) => e.text);
     assert.ok(texts.some((t) => t.startsWith('Shift 1 started')));
     assert.ok(texts.some((t) => t.startsWith('Shift 1 is complete')));
-    assert.ok(texts.some((t) => /^Route U\d → \w+ established\.$/.test(t)));
+    assert.ok(texts.some((t) => /^Route AJ\d{2} → \w+ established\.$/.test(t)));
     assert.ok(texts.some((t) => /passed signal/.test(t)));
     assert.ok(texts.some((t) => /locked for route/.test(t)));
     assert.ok(texts.some((t) => /returned to Danger/.test(t)));
@@ -374,16 +374,16 @@ describe('local shift history', () => {
 describe('scenarios', () => {
   test('every scenario is a validated, non-fallback timetable with the character it claims', () => {
     for (const s of SCENARIOS.filter((x) => x.seed !== null)) {
-      const tt = generateTimetable(ctx, s.seed as number);
+      const tt = generateTimetable(ctx, s.seed as number, { difficulty: s.difficulty ?? 'beginner' });
       assert.equal(tt.usedFallback, false, s.id);
-      assert.deepEqual(validateTimetable(ctx, tt), [], s.id);
+      assert.deepEqual(validateTimetable(ctx, tt, { countRange: [5, 25] }), [], s.id);
       const branch = tt.services.filter((v) => v.origin === 'M-IO' || v.destination === 'M-IO').length;
       const stops = tt.services.filter((v) => v.stops).length;
       if (s.id === 'normal') assert.ok([1, 2, 5].every((c) => tt.services.some((v) => v.trainClass === c)));
       if (s.id === 'busy') assert.ok(stops >= 5 && tt.services.some((v) => v.trainClass === 1) && concurrencyStats(tt.services).maxPresent >= 3);
       if (s.id === 'branch') assert.ok(branch >= 3);
       // deterministic
-      assert.deepEqual(generateTimetable(ctx, s.seed as number).services, tt.services);
+      assert.deepEqual(generateTimetable(ctx, s.seed as number, { difficulty: s.difficulty ?? 'beginner' }).services, tt.services);
     }
   });
 });

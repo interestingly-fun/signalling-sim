@@ -89,7 +89,7 @@ describe('logical sections map onto the drawn track', () => {
   test('before the start and past the end the path continues in a straight line, so a train enters and leaves the screen smoothly', () => {
     const path = buildTrackPath(net, ashcombeLayout, stepsOf('D1>D2'));
     const start = path.at(0);
-    const before = path.at(-100).at;
+    const before = path.at(-300).at;
     assert.ok(dist(before, start.at) > 10);
     const d = dist(start.at, before);
     const back: Pt = [(start.at[0] - before[0]) / d, (start.at[1] - before[1]) / d];

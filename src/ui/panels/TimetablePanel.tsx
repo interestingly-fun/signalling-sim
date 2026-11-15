@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from 'react';
-import { delayText, ON_TIME_S, stockLabel } from '../../engine';
+import { DIFFICULTIES, DIFFICULTY_IDS, delayText, ON_TIME_S, stockLabel, type DifficultyId } from '../../engine';
 import { SCENARIOS } from '../sim/scenarios';
-import { placeName, type ServiceRow, type Shift, type ShiftController } from '../sim/shift';
+import { placeName, type Shift, type ShiftController, type TimetableEntry } from '../sim/shift';
 import type { Simulation } from '../sim/simulation';
 import { useSlowFrame } from '../sim/useSlowFrame';
 import { SummaryView } from './ShiftSummaryView';
@@ -35,6 +35,8 @@ export function TimetablePanel({ sim, shift }: Props) {
   useSyncExternalStore(shift.subscribe, shift.getVersion);
   const [seed, setSeed] = useState('');
   const [scenario, setScenario] = useState('random');
+  const [difficulty, setDifficulty] = useState<DifficultyId>(shift.difficulty);
+  const [generating, setGenerating] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [hideDone, setHideDone] = useState(false);
   const [dismissed, setDismissed] = useState<number | null>(null); // shift whose summary was closed
@@ -46,18 +48,25 @@ export function TimetablePanel({ sim, shift }: Props) {
   const justEnded = cur && cur.status === 'completed' && dismissed !== cur.id ? cur : null;
   const summaryShift = viewing ?? justEnded;
   const tt = shift.timetable;
-  const rows = shift.rows();
-  const nextId = running ? rows.find((r) => r.actual.trainId === null && r.actual.cancelledS === null && r.actual.failedReason === null && r.actual.exitS === null)?.service.id : undefined;
+  const rows = shift.entries();
+  const nextId = running ? rows.filter((r) => r.leg !== 'outgoing').find((r) => r.row.actual.trainId === null && r.row.actual.cancelledS === null && r.row.actual.failedReason === null && r.row.actual.exitS === null)?.entryId : undefined;
   const shown = hideDone ? rows.filter((r) => !['Completed', 'Cancelled', 'Failed'].includes(r.status)) : rows;
   const doneCount = rows.filter((r) => r.status === 'Completed').length;
-  const lateCount = rows.filter((r) => r.delayS !== null && r.delayS >= ON_TIME_S && r.actual.exitS === null && r.actual.cancelledS === null).length;
+  const lateCount = rows.filter((r) => r.delayS !== null && r.delayS >= ON_TIME_S && r.row.actual.exitS === null && r.row.actual.cancelledS === null).length;
   const sc = SCENARIOS.find((s) => s.id === scenario);
 
+  // A scenario fixes its own difficulty; otherwise the selector decides.
+  const effectiveDifficulty: DifficultyId = sc?.difficulty ?? difficulty;
   const onGenerate = () => {
     const typed = seed.trim() === '' ? undefined : Number(seed);
     const useSeed = typed !== undefined && Number.isFinite(typed) ? typed : (sc?.seed ?? undefined);
-    shift.generate(useSeed);
-    setViewing(null);
+    // Measuring a busy shift's journeys takes a moment: say so first, then work.
+    setGenerating(true);
+    setTimeout(() => {
+      shift.generate(useSeed, effectiveDifficulty);
+      setViewing(null);
+      setGenerating(false);
+    }, 30);
   };
 
   return (
@@ -68,6 +77,7 @@ export function TimetablePanel({ sim, shift }: Props) {
           {cur?.status === 'running' ? ` · Shift ${cur.id} running` : cur ? ` · Shift ${cur.id} ${cur.status}` : tt ? ' · not started' : ''}
           {tt ? ` · ${tt.services.length} services · ${shift.clock(0)}–${shift.clock(tt.endS)}` : ''}
           {running ? ` · ${doneCount} done · ${lateCount} delayed` : ''}
+          {tt?.difficulty && DIFFICULTIES[tt.difficulty as DifficultyId] ? ` · ${DIFFICULTIES[tt.difficulty as DifficultyId].label}` : ''}
           {tt?.usedFallback ? ' · fallback timetable' : ''}
         </span>
       </h2>
@@ -86,11 +96,28 @@ export function TimetablePanel({ sim, shift }: Props) {
                 </select>
               </label>
               <label className="tt-seed">
+                Difficulty{' '}
+                <select
+                  aria-label="Difficulty"
+                  value={effectiveDifficulty}
+                  disabled={sc?.difficulty !== null && sc?.difficulty !== undefined}
+                  onChange={(e) => setDifficulty(e.target.value as DifficultyId)}
+                  title={DIFFICULTIES[effectiveDifficulty].description}
+                  data-testid="difficulty"
+                >
+                  {DIFFICULTY_IDS.map((d) => (
+                    <option key={d} value={d}>
+                      {DIFFICULTIES[d].label} ({DIFFICULTIES[d].countRange[0]}–{DIFFICULTIES[d].countRange[1]} trains)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="tt-seed">
                 Seed{' '}
                 <input aria-label="Timetable seed" className="seed-input" value={seed} placeholder={sc?.seed !== null && sc ? String(sc.seed) : 'random'} inputMode="numeric" onChange={(e) => setSeed(e.target.value.replace(/[^0-9]/g, '').slice(0, 9))} />
               </label>
-              <button type="button" onClick={onGenerate} data-testid="generate-timetable">
-                Generate timetable
+              <button type="button" onClick={onGenerate} disabled={generating} data-testid="generate-timetable">
+                {generating ? 'Generating…' : 'Generate timetable'}
               </button>
               <button
                 type="button"
@@ -101,7 +128,7 @@ export function TimetablePanel({ sim, shift }: Props) {
                   setDismissed(null);
                   shift.start();
                 }}
-                disabled={!shift.draft}
+                disabled={!shift.draft || generating}
                 title={shift.draft ? 'Start the shift on the timetable shown' : 'Generate a timetable first'}
               >
                 Start shift
@@ -225,7 +252,7 @@ export function TimetablePanel({ sim, shift }: Props) {
               </thead>
               <tbody>
                 {shown.map((r) => (
-                  <TimetableRow key={r.service.id} row={r} shift={shift} isNext={r.service.id === nextId} onCancel={() => shift.cancelService(r.service.id)} />
+                  <TimetableRow key={r.entryId} entry={r} shift={shift} isNext={r.entryId === nextId} onCancel={() => shift.cancelService(r.row.service.id)} />
                 ))}
               </tbody>
             </table>
@@ -256,50 +283,72 @@ function TimeCell({ shift, sched, actual, delayS, label }: { shift: ShiftControl
   );
 }
 
-function TimetableRow({ row, shift, isNext, onCancel }: { row: ServiceRow; shift: ShiftController; isNext: boolean; onCancel: () => void }) {
+function TimetableRow({ entry, shift, isNext, onCancel }: { entry: TimetableEntry; shift: ShiftController; isNext: boolean; onCancel: () => void }) {
+  const row = entry.row;
   const s = row.service;
   const a = row.actual;
-  const selected = shift.selectedServiceId === s.id;
-  const late = row.delayS !== null && row.delayS >= ON_TIME_S;
-  const canCancel = shift.running && a.entryS === null && a.cancelledS === null && a.failedReason === null;
+  const hc = entry.headcode;
+  const incoming = entry.leg === 'incoming';
+  const outgoing = entry.leg === 'outgoing';
+  const siding = entry.siding ? shift.sidingName(entry.siding) : '';
+  const selected = shift.selectedServiceId === entry.entryId;
+  const late = entry.delayS !== null && entry.delayS >= ON_TIME_S;
+  const finished = outgoing ? a.exitS !== null : incoming ? entry.status === 'Completed' : a.exitS !== null;
+  const canCancel = !outgoing && shift.running && a.entryS === null && a.cancelledS === null && a.failedReason === null;
   return (
     <tr
-      className={`tt-row st-${statusClass(row.status)}${selected ? ' selected' : ''}${isNext ? ' next' : ''}${late && a.exitS === null ? ' late-row' : ''}`}
-      data-testid={`tt-row-${s.headcode}`}
-      data-status={row.status}
-      onClick={() => shift.select(s.id)}
+      className={`tt-row st-${statusClass(entry.status)}${selected ? ' selected' : ''}${isNext ? ' next' : ''}${late && !finished && a.cancelledS === null ? ' late-row' : ''}${entry.leg !== 'whole' ? ` tt-${entry.leg}` : ''}`}
+      data-testid={`tt-row-${hc}`}
+      data-status={entry.status}
+      data-leg={entry.leg}
+      onClick={() => shift.select(entry.entryId)}
       aria-selected={selected}
     >
-      <TimeCell shift={shift} sched={s.entryS} actual={a.entryS} delayS={row.delays.entry} />
+      {outgoing ? <td className="mono tcell">—</td> : <TimeCell shift={shift} sched={s.entryS} actual={a.entryS} delayS={row.delays.entry} />}
       <td className="mono hc">
-        <button type="button" className="link" aria-label={`Select service ${s.headcode}`} onClick={(e) => { e.stopPropagation(); shift.select(s.id); }}>
-          {s.headcode}
+        <button type="button" className="link" aria-label={`Select service ${hc}`} onClick={(e) => { e.stopPropagation(); shift.select(entry.entryId); }}>
+          {hc}
         </button>
+        {outgoing ? <span className="muted tt-link" data-testid={`tt-link-${hc}`}> (Outgoing train for {entry.forHeadcode})</span> : null}
+        {incoming ? <span className="muted tt-link" data-testid={`tt-link-${hc}`}> (ECS into {siding})</span> : null}
         {isNext ? (
           <span className="badge next-badge" title="The next service due to enter">
             NEXT
           </span>
         ) : null}
       </td>
-      <td>{s.trainClass}</td>
+      <td>{entry.trainClass}</td>
       <td className="mono unit" title={stockLabel({ model: s.model, formation: s.formation })}>
         {s.model}
         <span className="muted"> {s.formation.replace('-car', 'c')}</span>
       </td>
-      <td>{placeName(s.origin)}</td>
-      <td>{placeName(s.destination)}</td>
-      <td>{s.platform ? s.platform.replace('PLAT', 'Pl ') : '—'}</td>
-      {s.stops ? <TimeCell shift={shift} sched={s.arrivalS} actual={a.arrivalS} delayS={row.delays.arrival} /> : <TimeCell shift={shift} sched={s.passS} actual={a.passS} delayS={a.passS !== null && s.passS !== null ? a.passS - s.passS : null} label="pass " />}
-      {s.stops ? <TimeCell shift={shift} sched={s.departureS} actual={a.departureS} delayS={row.delays.departure} /> : <td className="mono tcell">—</td>}
-      <td data-testid={`tt-status-${s.headcode}`}>
-        <span className={`st-dot st-${statusClass(row.status)}`} aria-hidden="true" /> {row.status}
+      <td>{outgoing ? siding : placeName(s.origin)}</td>
+      <td>{incoming ? siding : placeName(s.destination)}</td>
+      <td data-testid={`plat-${hc}`}>{entry.leg === 'whole' ? (
+        <>
+          {s.platform ? s.platform.replace('PLAT', 'Pl ') : '—'}
+          {s.platform && a.actualPlatform && a.actualPlatform !== s.platform ? <span className="plat-changed" title="Platform used instead of the planned one"> → {a.actualPlatform.replace('PLAT', 'Pl ')}</span> : null}
+        </>
+      ) : siding}</td>
+      {incoming ? (
+        <TimeCell shift={shift} sched={s.arrivalS} actual={a.arrivalS} delayS={row.delays.arrival} label="stabled " />
+      ) : outgoing ? (
+        <td className="mono tcell">—</td>
+      ) : s.stops ? (
+        <TimeCell shift={shift} sched={s.arrivalS} actual={a.arrivalS} delayS={row.delays.arrival} />
+      ) : (
+        <TimeCell shift={shift} sched={s.passS} actual={a.passS} delayS={a.passS !== null && s.passS !== null ? a.passS - s.passS : null} label="pass " />
+      )}
+      {outgoing ? <TimeCell shift={shift} sched={s.departureS} actual={a.departureS} delayS={row.delays.departure} /> : incoming ? <td className="mono tcell">—</td> : s.stops ? <TimeCell shift={shift} sched={s.departureS} actual={a.departureS} delayS={row.delays.departure} /> : <td className="mono tcell">—</td>}
+      <td data-testid={`tt-status-${hc}`}>
+        <span className={`st-dot st-${statusClass(entry.status)}`} aria-hidden="true" /> {entry.status}
       </td>
-      <td className={`mono delay${late ? ' late' : ''}`} data-testid={`tt-delay-${s.headcode}`}>
-        {row.delayS === null ? '—' : delayText(row.delayS)}
+      <td className={`mono delay${late ? ' late' : ''}`} data-testid={`tt-delay-${hc}`}>
+        {entry.delayS === null ? '—' : delayText(entry.delayS)}
       </td>
       <td>
         {canCancel ? (
-          <button type="button" className="mini" onClick={(e) => { e.stopPropagation(); onCancel(); }} aria-label={`Cancel ${s.headcode}`}>
+          <button type="button" className="mini" onClick={(e) => { e.stopPropagation(); onCancel(); }} aria-label={`Cancel ${hc}`}>
             Cancel
           </button>
         ) : null}

@@ -31,7 +31,7 @@ function runShift(seed: number): Result {
   shift.attach();
   shift.setMessageSink(() => {});
   attachBot(sim, shift, {});
-  shift.generate(seed);
+  shift.generate(seed, 'standard');
   assert.ok(shift.start());
   const r: Result = { maxLive: 0, multiS: 0, threeS: 0, completed: false, problems: [], protectionStops: 0, overspeeds: 0, maxExitDelayS: -Infinity, seen: { upDown: false, platformMain: false, branchMain: false, entryWhileOther: false }, sharedSections: 0, clock: 0, services: 0, allExited: false };
   sim.onEvents((events) => {
@@ -137,7 +137,7 @@ describe('Phase 8: entry behaviour', () => {
     shift.attach();
     shift.setMessageSink(() => {});
     attachBot(sim, shift, {});
-    shift.generate(1);
+    shift.generate(11); // a seed without an ECS cycle: this test is about entry holding, and a test bot cannot untangle a head-on branch conflict a delay creates
     shift.start();
     const first = shift.current!.timetable.services[0]!;
     // someone else (a test marker) occupies the first train's entry section for a while

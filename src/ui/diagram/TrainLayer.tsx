@@ -27,8 +27,23 @@ interface Props {
   readonly onSelectTrain?: (trainId: string) => void;
 }
 
+/**
+ * Phase 8.5: a train is drawn at a FIXED size in diagram units, whatever the length in metres of the section it is
+ * in. Only the train's own length decides it (a longer train is a longer symbol), so a train never shrinks to a dot on a
+ * long section. The nose is exactly at the front's logical position; the body is drawn back from it along the track.
+ * The physical length, the occupancy and the movement are not affected: this is rendering only.
+ */
+export const trainDrawnLength = (lengthM: number): number => Math.round(24 + 0.1 * lengthM);
+const NOSE_DRAWN = 9;
+
 const TAG_H = 15;
 const LEVELS = [-17, -33, -49, 18, 34];
+/** Drawn length of a polyline in diagram units (for tests and inspection). */
+const drawnLabel = (pts: readonly (readonly [number, number])[]): string => {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) d += Math.hypot((pts[i]?.[0] ?? 0) - (pts[i - 1]?.[0] ?? 0), (pts[i]?.[1] ?? 0) - (pts[i - 1]?.[1] ?? 0));
+  return d.toFixed(1);
+};
 const pathCache = new WeakMap<readonly PathStep[], TrackPath>();
 
 interface Placed {
@@ -51,7 +66,9 @@ export function TrainLayer({ net, layout, sim, onSelectTrain }: Props) {
       path = buildTrackPath(net, layout, v.train.path);
       pathCache.set(v.train.path, path);
     }
-    const mid = path.at((v.frontM + v.rearM) / 2).at;
+    const drawn = trainDrawnLength(v.train.spec.lengthM);
+    const body = path.trailing(v.frontM, drawn);
+    const mid = path.trailing(v.frontM, drawn / 2)[0] as readonly [number, number];
     const label = v.train.spec.headcode;
     const w = 8 + label.length * 7;
     let ty = mid[1] + (LEVELS[0] as number);
@@ -63,15 +80,14 @@ export function TrainLayer({ net, layout, sim, onSelectTrain }: Props) {
       }
     }
     placed.push({ x: mid[0], y: ty, w });
-    return { v, path, mid, label, w, ty };
+    return { v, path, mid, label, w, ty, body };
   });
 
   return (
     <g className="train-layer" pointerEvents="none">
-      {items.map(({ v, path, mid, label, w, ty }) => {
-        const { train, frontM, rearM } = v;
-        const body = path.between(rearM, frontM);
-        const nose = path.between(frontM - Math.min(14, train.spec.lengthM / 4), frontM);
+      {items.map(({ v, path, mid, label, w, ty, body }) => {
+        const { train, frontM } = v;
+        const nose = path.trailing(frontM, NOSE_DRAWN);
         const waiting = train.status === 'waiting to enter';
         return (
           <g
@@ -84,6 +100,7 @@ export function TrainLayer({ net, layout, sim, onSelectTrain }: Props) {
             data-status={train.status}
             data-selected={v.selected ? 'true' : 'false'}
             data-overspeed={train.speedInfo.overspeed ? 'true' : 'false'}
+            data-drawn-length={drawnLabel(body)}
           >
             {v.selected ? <polyline className="train-halo" points={toPoints(body)} /> : null}
             <polyline className="train-body" points={toPoints(body)} />

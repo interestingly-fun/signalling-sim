@@ -20,7 +20,7 @@ type Status = 'set' | 'available' | 'blocked' | 'automatic';
 
 function statusOf(ctx: SignallingContext, state: SignallingState, r: DerivedRoute): { status: Status; why?: string } {
   if (state.routes[r.from] === r.id) return { status: 'set' };
-  if (ctx.net.signals.get(r.from)?.type !== 'manual') return { status: 'automatic' };
+  if (ctx.net.signals.get(r.from)?.type === 'automatic') return { status: 'automatic' };
   const why = validateRoute(ctx, state, r.id)?.message;
   return why ? { status: 'blocked', why } : { status: 'available' };
 }
@@ -59,11 +59,11 @@ export function RouteTablePanel({ ctx, state, ui, message, onChooseRoute, onSetE
       ) : (
         <div className="selection-box">
           <div className="selection-head">
-            Entrance <code>{ui.entrance}</code>
+            Entrance <code>{ctx.signalName(ui.entrance)}</code>
             {proposal ? (
               <>
                 {' '}
-                → exit <code>{proposal.to}</code>
+                → exit <code>{ctx.signalName(proposal.to)}</code>
               </>
             ) : (
               <span className="muted"> – click an exit signal on the diagram</span>
@@ -81,7 +81,7 @@ export function RouteTablePanel({ ctx, state, ui, message, onChooseRoute, onSetE
                     title={st.why ?? `Set ${r.description}`}
                     onClick={() => (st.status === 'set' ? onChooseRoute(r.id) : onSetEntranceRoute(r.id))}
                   >
-                    → {r.to} <span className={`tag ${st.status}`}>{st.status}</span>
+                    → {ctx.signalName(r.to)} <span className={`tag ${st.status}`}>{st.status}</span>
                     <span className="choice-desc">{r.description}</span>
                   </button>
                 );
@@ -127,9 +127,7 @@ export function RouteTablePanel({ ctx, state, ui, message, onChooseRoute, onSetE
             const block = cancelBlock(ctx, state, id);
             return (
               <li key={id}>
-                <code>
-                  {r.from} → {r.to}
-                </code>
+                <code>{ctx.routeName(r.id)}</code>
                 <span className="muted">{r.description}</span>
                 <button type="button" disabled={block !== null} title={block ?? 'Cancel this route and return its signal to Red'} onClick={() => onCancelRoute(id)}>
                   Cancel
@@ -145,13 +143,13 @@ export function RouteTablePanel({ ctx, state, ui, message, onChooseRoute, onSetE
         {groups.map(([from, list]) => (
           <div key={from} className="route-group">
             <div className="route-from">
-              {from} <span className="muted">{ctx.net.signals.get(from)?.type}</span>
+              {ctx.signalName(from)} <span className="muted">{ctx.net.signals.get(from)?.type}</span>
             </div>
             {list.map((r) => {
               const st = statusOf(ctx, state, r);
               const body = (
                 <>
-                  <span className="route-to">→ {r.to}</span>
+                  <span className="route-to">→ {ctx.signalName(r.to)}</span>
                   <span className="route-desc">{r.description}</span>
                   <span className={`tag ${st.status}`}>{st.status}</span>
                 </>

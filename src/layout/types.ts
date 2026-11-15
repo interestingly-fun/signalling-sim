@@ -18,6 +18,8 @@ export interface Rect {
   /** Extra drawing space left of x = 0 and right of x = width (approach sections outside the original frame). */
   readonly marginLeft?: number;
   readonly marginRight?: number;
+  /** Extra drawing space above y = 0 (the Phase 9 sidings stand in the north-east corner, above the UP main). */
+  readonly marginTop?: number;
 }
 
 export type LabelSize = 'xl' | 'lg' | 'md' | 'sm';
@@ -36,6 +38,10 @@ export interface LayoutDef {
   /** Extra drawing space left of x = 0 and right of x = width (approach sections outside the original frame). */
   readonly marginLeft?: number;
   readonly marginRight?: number;
+  /** Extra drawing space above y = 0 (the Phase 9 sidings stand in the north-east corner, above the UP main). */
+  readonly marginTop?: number;
+  /** Optional per-signal nudge of the signal's name label, in drawing units (used where two signals stand close together). */
+  readonly signalLabelOffsets?: Readonly<Record<string, readonly [number, number]>>;
   /**
    * One polyline per section, listed from section end A to section end B.
    * The first vertex is end A, the last vertex is end B.

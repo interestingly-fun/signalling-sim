@@ -146,7 +146,7 @@ export function InspectorPanel({ ctx, state, aspects, selection, onMovePoint, on
   return (
     <div className="panel-body">
       <h3>
-        Signal <code>{sig.id}</code>
+        Signal <code data-testid="signal-name">{sig.name}</code>{sig.description ? <span className="muted"> · {sig.description}</span> : null}
       </h3>
       <dl>
         <Row k="Type">{sig.type === 'manual' ? 'Manual – routes are set by the signaller' : 'Automatic – no player control'}</Row>
@@ -161,7 +161,7 @@ export function InspectorPanel({ ctx, state, aspects, selection, onMovePoint, on
         ) : null}
         <Row k="Because">{explanation.reason}</Row>
         {forced && underlying ? <Row k="Would show">{ASPECT_NAMES[underlying]} (automatic calculation, suppressed)</Row> : null}
-        {sig.type === 'manual' ? <Row k="Route">{established !== undefined ? `${established} established` : 'None set'}</Row> : null}
+        {sig.type === 'manual' ? <Row k="Route">{established !== undefined ? `${ctx.routeName(established)} established` : 'None set'}</Row> : null}
       </dl>
       {sig.type === 'automatic' ? (
         <>
@@ -176,7 +176,7 @@ export function InspectorPanel({ ctx, state, aspects, selection, onMovePoint, on
       {established !== undefined ? (
         <>
           <button type="button" disabled={cancelReason !== null} onClick={() => onCancelRoute(established)}>
-            Cancel route {established}
+            Cancel route {ctx.routeName(established)}
           </button>
           {cancelReason ? <p className="note">{cancelReason}</p> : null}
         </>
@@ -191,12 +191,10 @@ export function InspectorPanel({ ctx, state, aspects, selection, onMovePoint, on
             <li key={r.id}>
               {sig.type === 'manual' ? (
                 <button type="button" className="link" onClick={() => onPreviewRoute(r.id)}>
-                  {r.from} → {r.to}
+                  {ctx.routeName(r.id)}
                 </button>
               ) : (
-                <code>
-                  {r.from} → {r.to}
-                </code>
+                <code>{ctx.routeName(r.id)}</code>
               )}{' '}
               <span className={`tag ${status}`}>{status}</span> <span className="muted">{r.description}</span>
             </li>
