@@ -6,7 +6,9 @@ A browser-based simulator of a fictional modern British signalling control area,
 
 ## Status
 
-**Phase 8 – speed restrictions, realistic braking, section distances and concurrent traffic: done, awaiting review.** (Phases 1–7 are kept.) Phases 1–5 are kept: the topology, interlocking, two-click routes, approaches and override are unchanged in behaviour. The one deliberate change to the interlocking is *sectional route release* (below).
+**Northbridge Station map: implemented, awaiting review** (see "Northbridge Station (second map)" below). Ashcombe Junction is unchanged.
+
+**Phase 10 – Increased traffic and timetable complexity: done, awaiting review.** Phase 9 (Ashcombe Sidings, shunting signals, train reversal) and Phases 1–8.5 (zoom/pan, interface, platforms, signal names, speed limits, rolling stock) are kept. Phases 1–5 are kept: the topology, interlocking, two-click routes, approaches and override are unchanged in behaviour. The one deliberate change to the interlocking is *sectional route release* (below).
 
 | Implemented | Not yet implemented |
 | --- | --- |
@@ -53,6 +55,58 @@ A timetable is generated on load so it can be inspected; nothing runs until **St
 - **Shift history** is kept in the browser (last 8 shifts, including each shift's events) and can be reviewed (Summary / Service history / Events). *Forget saved shifts* deletes them. Unreadable saved data is ignored.
 - Reset on the diagram is refused while a shift is running; abandon the shift first.
 
+## Main menu and map selection
+
+The app now opens on a main menu (`src/ui/menu/`), not directly on the workstation.
+
+- **Main menu** → **Start** → **Map selection**: a horizontal railway line with three circular buttons (Clumberfield Freight Yard – Medium, Ashcombe Junction – Easy, Northbridge Station – Intermediate), laid out after the supplied reference. On narrow screens the line turns vertical.
+- Clicking a circle opens that map's **information page** (name, difficulty, description, feature list, static preview, Start). Opening it does not start anything.
+- **Ashcombe Junction** and **Northbridge Station** are playable; each Start opens that map's own workstation (separate shift history storage). Ashcombe's workstation is unchanged. The shift is still started separately with the workstation's own *Generate timetable* / *Start shift* controls.
+- **Clumberfield Freight Yard** is marked "Coming soon" with a disabled Start; its preview is labelled *Conceptual preview — not a playable map*. Northbridge's preview is its real static track layout.
+- There is deliberately no navigation back out of the workstation, so a running shift can never be discarded by accident (reload the page to return to the menu).
+- Map text lives in `src/ui/menu/maps.ts`. To make a future map playable, register its workstation component in `defaultWorkstations` (`Shell.tsx`) and clear its `planned` flag.
+
+## Northbridge Station (second map)
+
+A six-platform terminus on the shared engine (`src/engine/topology/northbridge.ts`, `src/layout/northbridgeLayout.ts`, `src/ui/NorthbridgeApp.tsx`). Intermediate map difficulty; shifts use the Phase 10 profiles.
+
+- **Two independent corridors:** AJ (Ashcombe Junction ↔ Northbridge, two tracks) and BR (Barchester ↔ Northbridge, four tracks: two central fast, two outer slow, merging as drawn). No route may use both corridors; they run at the same time.
+- **Platforms:** Northbridge-West 1–2 AJ only, 3–4 BR only. Terminus platforms 1–2 AJ only, 3–4 AJ or BR, 5–6 BR only. Enforced by the interlocking (route validation and train-aware validation), not just the timetable.
+- **Fast/slow:** chosen by the signaller (the timetable may only suggest a line).
+- **Terminating trains:** approach → route → stop → dwell → change ends (standing only, 60 s) → new headcode → departure route → depart; the same physical train, rear clearance as normal. Shown in the timetable as the incoming/outgoing split rows used for ECS.
+- Signals NB01–NB13 (manual), NB100–NB119 (automatic), NB31–NB36 terminus departure; there are no terminus entry signals, NB03 (AJ) and NB10 (BR) route straight into a platform.
+- Differences from the supplied diagram, needed to make operation possible: crossovers X1/X2, connectors CAJ/CB*, and the departure signals NB31–NB36.
+- The Trains test panel (manual through trains) is not offered here; it only has Pause and Speed. Services come from the shift timetable.
+- Generating a Northbridge timetable measures every terminating cycle and takes about 2–8 s depending on difficulty.
+
+## Phase 10.5: smooth signal aspect transitions
+
+Signal lamps fade when an aspect changes: the lamp that goes out fades out (90 ms), then the newly lit lamp fades in (110 ms), about 200 ms in all, so two different aspects are never visible together and Double Yellow's two lamps move as one. It is drawing only: the logical aspect, interlocking, trains, event log and simulation clock are unchanged and never read the animation. With the operating system's reduced-motion preference the change is immediate. No setting was added.
+
+## Phase 10: increased traffic and timetable complexity
+
+- **Difficulty** (Timetable panel, before Start): Beginner 5–7 services, Standard 8–12, Advanced 13–18, Expert 19–25. These are generation *targets*; the profile (`engine/timetable/difficulty.ts`, plain data) also sets how deliberately trains overlap, the extra clearance kept, shift density and the minimum peak concurrency. The timetable can be inspected before Start; the same seed and difficulty always give the same timetable.
+- **Planning.** Lone-train durations are measured with the real simulation; services are then placed over an occupancy index of section, point and siding windows. Independent routes overlap freely; shared resources keep real clearance (the validator's margin plus the difficulty margin); no artificial delay is added. If the railway cannot support the target safely, fewer services are generated and the reason is shown.
+- **Testing information** (panel under the operations strip): count and target range, difficulty, peak concurrency, overlapping and independent-simultaneous pairs, junction interactions, close sequences, interaction kinds, and revised or reduced services with reasons.
+- Scenarios now include Standard, Advanced and Expert seeds.
+
+## Phase 9: Ashcombe Sidings, shunting signals and train reversal
+
+- **Sidings.** *Ashcombe Siding 1* and *Ashcombe Siding 2* (north-east, "ECS access only") leave the DOWN main at SLP, cross the UP main on a diamond; a second lead leaves the UP main at SLU. Each siding is its own track section with its own occupancy; a siding holds one train and the whole train plus a clearance at the buffer stops must fit (capacity = section length − clearance, read from the topology).
+- **Shunting signals** are triangles pointing the way they govern (red = Stop, green = Proceed), manual and interlocked, never self-clearing. **AJ1** (DOWN main) and **AJ4** (UP main, section UP11) are *main-line* shunting signals: they start the route into the sidings (click AJ1 or AJ4, then the buffer stops of the siding) and show green when it is set; trains running along the main line ignore them. **AJ5** and **AJ6** authorise a train leaving Siding 1 / Siding 2. There are no AJ2/AJ3 entry signals.
+- **Reversal** is a physical state machine (approaching → braking → stopped/awaiting → reversing → ready, 60 s changing ends at zero speed). It happens in a reversal bay on the main lines (DN5, P2) or at the buffer stops of a siding, only when the train fits and the sections it will then occupy are available.
+- **ECS cycle.** Only Class 5 ECS may enter a siding (refused by the interlocking checks). It can arrive from Northbridge, Westford or Merefield, stable for a varied time, then change headcode and class (model-compatible: 800/221/390 Class 1; 142/150/170/175 Class 2; 387/350 Class 1 or 2; any model Class 5) and leave to any exit a valid route reaches. It is the same physical train throughout.
+- **Timetable.** The generator adds 0–2 ECS cycles per shift (modest traffic), checking siding capacity, length, routes, occupancy windows and the departure route; the validator checks them again.
+- **Testing information** (Trains → Inspector) shows reversal state, direction, assigned siding, siding occupancy/capacity, stabling timer and incoming/outgoing headcodes and classes. The Event Log records the ECS milestones (not every tick).
+
+## Phase 8.5: diagram navigation, interface, platforms and signal names
+
+- **Zoom and pan.** Mouse wheel (centred on the pointer), the − / + buttons and *Reset view* in the bottom-right corner of the diagram (70 %–500 %), drag to pan, pinch on touch screens. A drag never selects or sets anything; a plain click still does. The whole drawing is one transformed group, so tracks, signals and trains cannot drift apart.
+- **Trains keep one drawn size** whatever the length in metres of the section they are in (a longer train is a slightly longer symbol). Physical length, occupancy and braking are untouched.
+- **Interface.** The compact train inspector (headcode, destination, speed, class) is fixed in the top-left of the diagram. **Enable testing information** shows the grouped diagnostics (operations strip, Trains, Inspector, Routes, About); **Enable the Event Log** shows the log. They are independent; events are recorded even while the log is hidden. Route feedback and *Cancel route* for the selected signal stay in the strip under the diagram.
+- **Platforms.** The timetable platform is the plan; the route the signaller sets decides the platform used (`stop.scheduledPlatform` vs `stop.platform`, `actualPlatform` on the shift record). A route to a platform is refused when the train waiting for it does not fit (`validateRouteForTrains`), or by the interlocking when the platform is occupied or in conflict.
+- **Signal names.** Manual signals are AJ01–AJ11, automatic signals AJ100–AJ116, shunting signals AJ1, AJ4, AJ5, AJ6 (fictional local convention; every name is unique). Internal ids (U2, P1E …) are unchanged; only `SignalDef.name` is shown. Behaviour comes from `type`, never from the name.
+
 ## Phase 8: speed limits, braking, distances and concurrent traffic
 
 - **Longer railway.** Section lengths are simulated metres, independent of how they are drawn: the outer approaches are about 3.4 km (UP and DOWN), the branch 2.4 km, the departures 2.5–3 km. The diagram is unchanged.
@@ -88,3 +142,10 @@ docs/ARCHITECTURE.md   Topology, layout separation and design decisions
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Phase 9 correction: shunting associations and siding speed
+
+- AJ01 and AJ04 are explicitly associated with ordinary manual signals (`associatedMain` in the signalling data: AJ01 ↔ DR1, P2E; AJ04 ↔ U5, P1E, DR1, P2E).
+- To shunt into a siding, set the **access route** (e.g. DR1 → AJ01), then from the shunting signal route to the siding buffer stops. The main signal stays at Danger; the shunting Proceed authorises only that Class 5 ECS movement (it ends at the buffer). Ordinary mainline trains always obey the main signal.
+- Ordinary routes can no longer run directly into the sidings; everything goes through the existing interlocking (`validateRoute`, locks, `validateRouteForTrains`).
+- Siding interior speed is `sidingInteriorMph` (default **5 mph**) in `src/engine/speed/config.ts`; the siding lead/throat use `lineMph.SIDING` (15 mph) separately; the most restrictive limit wins.
