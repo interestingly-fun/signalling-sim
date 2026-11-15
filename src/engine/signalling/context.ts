@@ -7,7 +7,7 @@
  * the interlocking recognise opposing movements on bi-directional track.
  */
 
-import { otherEnd, type Network } from '../topology/network';
+import { movementLabel, otherEnd, signalName, type Network } from '../topology/network';
 import { deriveRoutes } from '../topology/routeTable';
 import { stepsFrom } from '../topology/traversal';
 import type { DerivedRoute } from '../topology/types';
@@ -34,6 +34,10 @@ export interface SignallingContext {
   between(from: string, to: string): readonly DerivedRoute[];
   /** Sections that physically cross the given one (diamond crossings). */
   crossings(sectionId: string): readonly string[];
+  /** Display identity of a signal (e.g. AJ01). Messages show this; internal ids are never the player's view of a signal. */
+  signalName(signalId: string): string;
+  /** Display text of a movement from its id: "AJ02 → AJ03". */
+  routeName(routeId: string): string;
 }
 
 function buildInfo(net: Network, route: DerivedRoute): RouteInfo {
@@ -72,6 +76,11 @@ export function createSignallingContext(net: Network, routes: readonly DerivedRo
     from: (signalId) => routes.filter((r) => r.from === signalId),
     between: (from, to) => routes.filter((r) => r.from === from && r.to === to),
     crossings: (sectionId) => crossingMap.get(sectionId) ?? [],
+    signalName: (signalId) => signalName(net, signalId),
+    routeName: (routeId) => {
+      const r = byId.get(routeId);
+      return r ? movementLabel(net, r.from, r.to) : routeId;
+    },
   };
 }
 

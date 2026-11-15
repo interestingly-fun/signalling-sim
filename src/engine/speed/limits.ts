@@ -35,7 +35,7 @@ export interface LimitSegment {
   readonly label: string;
 }
 
-const LINE_NAME: Record<LineKind, string> = { UP: 'Mainline', DOWN: 'Mainline', BRANCH: 'Branch', PLATFORM: 'Platform loop', CROSSOVER: 'Crossover', LINK: 'Link' };
+const LINE_NAME: Record<LineKind, string> = { UP: 'Mainline', DOWN: 'Mainline', BRANCH: 'Branch', PLATFORM: 'Platform loop', CROSSOVER: 'Crossover', LINK: 'Link', SIDING: 'Siding approach' };
 
 const mph = (ms: number): number => Math.round(msToMph(ms));
 const label = (name: string, ms: number): string => `${name} ${mph(ms)} mph`;
@@ -46,6 +46,7 @@ function build(net: Network, config: SpeedConfig): Map<string, SectionLimit> {
   const out = new Map<string, SectionLimit>();
   const reverseLegs = new Set<string>();
   for (const p of net.points.values()) reverseLegs.add(p.reverse.section);
+  const interior = new Set<string>([...config.sidingSections, ...[...net.sidings.values()].map((sd) => sd.section)]);
   for (const s of net.sections.values()) {
     let limit: SectionLimit = {
       limitMs: mphToMs(config.lineMph[s.line]),
@@ -58,7 +59,7 @@ function build(net: Network, config: SpeedConfig): Map<string, SectionLimit> {
     if (reverseLegs.has(s.id)) consider(mphToMs(config.divergingMph), 'diverging', 'Diverging route');
     const own = config.sectionMph[s.id];
     if (own !== undefined) consider(mphToMs(own), 'junction', 'Junction leg');
-    if (config.sidingSections.includes(s.id)) consider(mphToMs(config.sidingMph), 'siding', 'Siding');
+    if (interior.has(s.id)) consider(mphToMs(config.sidingInteriorMph), 'siding', 'Siding interior');
     out.set(s.id, limit);
   }
   return out;

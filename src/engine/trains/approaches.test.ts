@@ -237,6 +237,6 @@ describe('trains traverse the extended approaches', () => {
     const de2 = net.sections.get('DNE2')?.lengthM ?? 0; // DE2 stands at the end of DNE2
     assert.ok(maxFront < de2, `held short of DE2 at ${de2} m (reached ${maxFront.toFixed(1)})`);
     assert.equal(train.state, 'stopped');
-    assert.match(train.holdReason, /DE2/);
+    assert.match(train.holdReason, /AJ105/);
   });
 });

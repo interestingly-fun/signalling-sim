@@ -173,7 +173,7 @@ describe('trains and a forced signal', () => {
     assert.ok(maxFront < D1_AT, `front ${maxFront} stays short of D1 at ${D1_AT}`);
     assert.ok(maxFront > D1_AT - 30);
     assert.equal(w.train.state, 'stopped');
-    assert.match(w.train.holdReason, /signal D1/);
+    assert.match(w.train.holdReason, /signal AJ107/);
     assert.ok(decel <= 0.9 * 1.4, `smooth braking (${decel.toFixed(2)} m/s²)`);
     assert.ok(!w.events.some((e) => e.kind === 'protection-stop'));
     assert.ok(!w.events.some((e) => e.kind === 'passed-signal' && e.signal === 'D1'));
@@ -200,7 +200,7 @@ describe('trains and a forced signal', () => {
     run(w, (x) => x.train.state === 'stopped', 400, (x) => (maxFront = Math.max(maxFront, x.train.frontM)));
     const d4End = D4_END;
     assert.ok(maxFront < d4End, 'never reaches D4');
-    assert.match(w.train.holdReason, /D4/);
+    assert.match(w.train.holdReason, /AJ108/);
     w.sig = release(w.sig, 'D4');
     run(w, (x) => x.train.finished);
     assert.equal(w.train.finished, true);

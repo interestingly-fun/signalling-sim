@@ -11,7 +11,9 @@ import type { PointDef, PointPosition, PointRequirement, SectionEnd } from './ty
 /** One possible next move after leaving a section end. */
 export type Step =
   | { readonly kind: 'enter'; readonly enter: SectionEnd; readonly requires?: PointRequirement }
-  | { readonly kind: 'exit'; readonly boundary: string };
+  | { readonly kind: 'exit'; readonly boundary: string }
+  /** The buffer stops at the end of a siding (Phase 9): no further move is possible. */
+  | { readonly kind: 'buffer'; readonly boundary: string };
 
 /** May a train leave the section through this end? */
 export function canLeave(net: Network, e: SectionEnd): boolean {
@@ -42,6 +44,7 @@ export function stepsFrom(net: Network, leaving: SectionEnd): Step[] {
       return canEnter(net, att.other) ? [{ kind: 'enter', enter: att.other }] : [];
     case 'boundary': {
       const b = net.boundaries.get(att.boundary);
+      if (b?.buffer) return [{ kind: 'buffer', boundary: b.id }];
       return b?.exit ? [{ kind: 'exit', boundary: b.id }] : [];
     }
     case 'point': {
@@ -72,9 +75,9 @@ export function nextWithPositions(
   net: Network,
   leaving: SectionEnd,
   positions: Readonly<Record<string, PointPosition>>,
-): { kind: 'enter'; enter: SectionEnd } | { kind: 'exit'; boundary: string } | undefined {
+): { kind: 'enter'; enter: SectionEnd } | { kind: 'exit'; boundary: string } | { kind: 'buffer'; boundary: string } | undefined {
   for (const step of stepsFrom(net, leaving)) {
-    if (step.kind === 'exit') return step;
+    if (step.kind === 'exit' || step.kind === 'buffer') return step;
     if (!step.requires || positions[step.requires.point] === step.requires.position) return { kind: 'enter', enter: step.enter };
   }
   return undefined;

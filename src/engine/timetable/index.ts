@@ -6,3 +6,6 @@ export * from './generate';
 export * from './status';
 export * from './summary';
 export * from './concurrency';
+export * from './difficulty';
+export * from './analysis';
+export * from './generateTerminus';

@@ -14,12 +14,18 @@ import type {
   NetworkDef,
   PlatformDef,
   PointDef,
+  ReversalBayDef,
   SectionDef,
   SectionEnd,
+  SidingDef,
   SignalDef,
 } from './types';
 
 export const endKey = (e: SectionEnd): string => `${e.section}.${e.end}`;
+/** Display identity of a signal (e.g. AJ01); the internal id if the signal is unknown. */
+export const signalName = (net: Pick<Network, 'signals'>, id: string): string => net.signals.get(id)?.name ?? id;
+/** Display text of a movement: "AJ02 → AJ03". */
+export const movementLabel = (net: Pick<Network, 'signals'>, from: string, to: string): string => `${signalName(net, from)} → ${signalName(net, to)}`;
 export const otherEnd = (e: EndId): EndId => (e === 'A' ? 'B' : 'A');
 
 export class NetworkValidationError extends Error {
@@ -39,6 +45,9 @@ export interface Network {
   readonly platforms: ReadonlyMap<string, PlatformDef>;
   readonly boundaries: ReadonlyMap<string, BoundaryDef>;
   readonly junctions: ReadonlyMap<string, JunctionDef>;
+  /** Stabling sidings and reversing bays (Phase 9). Empty when the network has none. */
+  readonly sidings: ReadonlyMap<string, SidingDef>;
+  readonly reversalBays: ReadonlyMap<string, ReversalBayDef>;
   /** What the given section end is attached to. */
   attachmentAt(end: SectionEnd): Attachment;
   /** The signal (if any) governing trains that leave through the given section end. */
@@ -60,6 +69,13 @@ export function validateNetworkDef(def: NetworkDef): string[] {
   const sections = indexById(def.sections, 'section', issues);
   const points = indexById(def.points, 'point', issues);
   indexById(def.signals, 'signal', issues);
+  // display names identify signals to the player, so two signals must never share one
+  const shown = new Map<string, string>();
+  for (const sg of def.signals) {
+    const prev = shown.get(sg.name);
+    if (prev !== undefined) issues.push(`signals ${prev} and ${sg.id} share the display name "${sg.name}"`);
+    else shown.set(sg.name, sg.id);
+  }
   const platforms = indexById(def.platforms, 'platform', issues);
   indexById(def.boundaries, 'boundary', issues);
   indexById(def.junctions, 'junction', issues);
@@ -100,7 +116,9 @@ export function validateNetworkDef(def: NetworkDef): string[] {
   }
   for (const b of def.boundaries) {
     attach(b.at, `boundary ${b.id}`);
-    if (!b.entry && !b.exit) issues.push(`boundary ${b.id} is neither an entry nor an exit`);
+    if (b.buffer) {
+      if (b.entry || b.exit) issues.push(`buffer ${b.id} cannot be an entry or an exit`);
+    } else if (!b.entry && !b.exit) issues.push(`boundary ${b.id} is neither an entry nor an exit`);
   }
   for (const s of def.sections) {
     for (const e of ['A', 'B'] as const) {
@@ -162,6 +180,44 @@ export function validateNetworkDef(def: NetworkDef): string[] {
   }
   const pointsInJunctions = new Set(def.junctions.flatMap((j) => j.points));
   for (const p of def.points) if (!pointsInJunctions.has(p.id)) issues.push(`point ${p.id} does not belong to any junction`);
+
+  // --- sidings and reversing bays (Phase 9) --------------------------------------------
+  const sigById = new Map(def.signals.map((x) => [x.id, x]));
+  for (const sd of def.sidings ?? []) {
+    const sc = sections.get(sd.section);
+    if (!sc) {
+      issues.push(`siding ${sd.id} refers to unknown section "${sd.section}"`);
+      continue;
+    }
+    if (sc.line !== 'SIDING') issues.push(`siding ${sd.id}: section ${sc.id} is not a SIDING line`);
+    if (sd.clearanceM < 0 || sd.clearanceM >= sc.lengthM) issues.push(`siding ${sd.id}: clearance ${sd.clearanceM} m does not fit the section (${sc.lengthM} m)`);
+    const exit = sigById.get(sd.exitSignal);
+    if (!exit || exit.type !== 'shunting') issues.push(`siding ${sd.id}: exit signal "${sd.exitSignal}" must be a shunting signal`);
+    if (exit && !(exit.at.section === sc.id && exit.at.end === 'A')) issues.push(`siding ${sd.id}: the exit signal must stand at end A of ${sc.id}`);
+  }
+  // Shunting associations (Phase 9 correction): explicit, one-way, and only ever between a main-line shunting signal and ordinary signals.
+  for (const sg of def.signals) {
+    if (!sg.associatedMain) continue;
+    if (sg.type !== 'shunting' || !sg.mainline) issues.push(`signal ${sg.id}: only a main-line shunting signal can have associated main signals`);
+    for (const m of sg.associatedMain) {
+      const main = sigById.get(m);
+      if (!main) issues.push(`signal ${sg.id} is associated with unknown signal "${m}"`);
+      else if (main.type !== 'manual') issues.push(`signal ${sg.id}: associated signal ${m} must be an ordinary manual signal`);
+    }
+  }
+  for (const bay of def.reversalBays ?? []) {
+    const sc = sections.get(bay.section);
+    if (!sc) {
+      issues.push(`reversal bay ${bay.id} refers to unknown section "${bay.section}"`);
+      continue;
+    }
+    if (sc.traffic !== 'both') issues.push(`reversal bay ${bay.id}: section ${sc.id} must carry traffic in both directions`);
+    const stop = sigById.get(bay.stopSignal);
+    const depart = sigById.get(bay.departSignal);
+    if (!stop || !(stop.at.section === sc.id && stop.at.end === bay.stopEnd)) issues.push(`reversal bay ${bay.id}: the stop signal must stand at end ${bay.stopEnd} of ${sc.id}`);
+    const other = bay.stopEnd === 'A' ? 'B' : 'A';
+    if (!depart || !(depart.at.section === sc.id && depart.at.end === other)) issues.push(`reversal bay ${bay.id}: the departure signal must stand at end ${other} of ${sc.id}`);
+  }
 
   // --- connectivity ------------------------------------------------------------------
   const first = def.sections[0];
@@ -225,6 +281,8 @@ export function buildNetwork(def: NetworkDef): Network {
     platforms: toMap(def.platforms),
     boundaries: toMap(def.boundaries),
     junctions: toMap(def.junctions),
+    sidings: toMap(def.sidings ?? []),
+    reversalBays: toMap(def.reversalBays ?? []),
     attachmentAt(e) {
       const a = attachments.get(endKey(e));
       if (!a) throw new Error(`No attachment at ${endKey(e)}`); // unreachable after validation

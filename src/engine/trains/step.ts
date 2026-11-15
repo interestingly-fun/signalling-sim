@@ -17,7 +17,7 @@
  *     the rear has cleared its last section.
  */
 
-import { otherEnd, type Network } from '../topology/network';
+import { otherEnd, signalName, type Network } from '../topology/network';
 import { nextWithPositions } from '../topology/traversal';
 import { computeAspects, isAutomaticMovementClear } from '../signalling/aspects';
 import type { SignallingContext } from '../signalling/context';
@@ -28,9 +28,13 @@ import { msToMph } from '../rollingstock/models';
 import { SPEED_CONFIG, nextRestriction, permittedAt, sectionLimit, speedEnvelope, type LimitSegment } from '../speed';
 import { endOf, frontSection, lastStep, occupiedSteps, rearM, startOf } from './geometry';
 import { accelerationAt } from './performance';
-import { lookAhead, signalAtEnd } from './lookahead';
+import { lookAhead } from './lookahead';
+import { shuntAuthorities, signalFor, stopsAt } from './shunting';
+import { ecsAdvance, ecsPassedSignal, mustStopAt } from './ecs';
+import { terminalAdvance, terminalHolds, terminalPassedSignal } from './terminal';
+import type { TerminalJob } from './types';
 import { platformFit } from './platforms';
-import type { Limit, MovementState, OperationalStatus, PathStep, SpeedInfo, StopState, Train, TrainEvent, TrainSpec } from './types';
+import type { EcsJob, Limit, MovementState, OperationalStatus, PathStep, SpeedInfo, StopState, Train, TrainEvent, TrainSpec } from './types';
 
 export interface StepResult {
   readonly sig: SignallingState;
@@ -43,6 +47,7 @@ export type SpawnResult =
   | { readonly ok: false; readonly reason: string };
 
 const EPS = 1e-9;
+const NO_HEADCODES: ReadonlySet<string> = new Set();
 /** Below this the train is treated as standing. */
 const STANDING_MS = 0.02;
 
@@ -57,6 +62,10 @@ export interface SpawnOptions {
   readonly id?: string;
   /** Movement IDs the signaller is expected to set (informational). */
   readonly plan?: readonly string[];
+  /** Phase 9: the ECS siding cycle this train works. */
+  readonly ecs?: EcsJob | null;
+  /** Northbridge: the terminating service this train works. */
+  readonly terminal?: TerminalJob | null;
 }
 
 /**
@@ -84,7 +93,7 @@ export function spawnTrain(net: Network, sig: SignallingState, spec: TrainSpec, 
     if (!permissionsFor(spec.trainClass, spec.stock?.model).canStop) return { ok: false, reason: `Class ${spec.trainClass} trains do not stop here.` };
     const fit = platformFit(net, platform.id, spec.lengthM);
     if (!fit.ok) return { ok: false, reason: fit.reason };
-    stop = { platform: platform.id, section: platform.section, dwellS: spec.stop.dwellS, remainingS: spec.stop.dwellS, phase: 'pending' };
+    stop = { platform: platform.id, scheduledPlatform: platform.id, section: platform.section, dwellS: spec.stop.dwellS, remainingS: spec.stop.dwellS, phase: 'pending' };
   }
 
   const waiting = (spec.entrySpeedMs ?? 0) > 0;
@@ -110,6 +119,8 @@ export function spawnTrain(net: Network, sig: SignallingState, spec: TrainSpec, 
     stop,
     speedInfo: { permittedMs: spec.maxSpeedMs, permittedLabel: 'Model maximum', overspeed: false, next: null, envelopeMs: spec.maxSpeedMs },
     plan: options.plan ?? [],
+    ecs: options.ecs ?? null,
+    terminal: options.terminal ?? null,
   };
   return { ok: true, sig: writeOccupancy(sig, train), train };
 }
@@ -135,21 +146,16 @@ export function removeTrain(ctx: SignallingContext, sig: SignallingState, train:
 function writeOccupancy(sig: SignallingState, train: Train): SignallingState {
   const want = new Set(train.finished ? [] : occupiedSteps(train).map((i) => train.path[i]?.section ?? ''));
   const current = sig.network.sectionOccupancy;
+  // Nothing changes in nearly every step: find out first, and copy the table only when something does.
+  const release: string[] = [];
+  for (const section in current) if (current[section] === train.id && !want.has(section)) release.push(section);
+  const take: string[] = [];
+  for (const section of want) if (current[section] !== train.id) take.push(section);
+  if (release.length === 0 && take.length === 0) return sig;
   const next: Record<string, string | null> = { ...current };
-  let changed = false;
-  for (const [section, owner] of Object.entries(current)) {
-    if (owner === train.id && !want.has(section)) {
-      next[section] = null;
-      changed = true;
-    }
-  }
-  for (const section of want) {
-    if (next[section] !== train.id) {
-      next[section] = train.id;
-      changed = true;
-    }
-  }
-  return changed ? { ...sig, network: { ...sig.network, sectionOccupancy: next } } : sig;
+  for (const section of release) next[section] = null;
+  for (const section of take) next[section] = train.id;
+  return { ...sig, network: { ...sig.network, sectionOccupancy: next } };
 }
 
 // ---------------------------------------------------------------------------
@@ -167,10 +173,10 @@ function pathSegments(net: Network, train: Train): LimitSegment[] {
   });
 }
 
-function holdReason(limit: Limit): string {
+function holdReason(net: Network, limit: Limit): string {
   switch (limit.kind) {
     case 'signal':
-      return `Held at signal ${limit.subject ?? ''} (Red)`;
+      return `Held at signal ${limit.subject ? signalName(net, limit.subject) : ''} (Red)`;
     case 'occupied':
       return `Section ${limit.subject ?? ''} ahead is occupied`;
     case 'points':
@@ -179,6 +185,8 @@ function holdReason(limit: Limit): string {
       return `Section ${limit.subject ?? ''} ahead is not permitted for this class of train`;
     case 'platform':
       return `Stopping at ${limit.subject ?? 'the platform'}`;
+    case 'buffer':
+      return 'At the buffer stops';
     default:
       return '';
   }
@@ -188,7 +196,7 @@ function holdReason(limit: Limit): string {
 // The step
 // ---------------------------------------------------------------------------
 
-export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainIn: Train, dt: number): StepResult {
+export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainIn: Train, dt: number, otherHeadcodes: ReadonlySet<string> = NO_HEADCODES): StepResult {
   if (trainIn.finished) return { sig: sigIn, train: trainIn, events: [] };
   const net = ctx.net;
   const events: TrainEvent[] = [];
@@ -197,7 +205,7 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   const spec = train.spec;
 
   let aspects = computeAspects(ctx, sig);
-  const limit = lookAhead(net, sig, aspects, train);
+  const limit = lookAhead(net, sig, aspects, train, shuntAuthorities(ctx, sig, aspects));
   const margin = limit.marginM ?? spec.stopMarginM;
 
   // --- 0. admission of a train waiting outside the boundary -----------------------
@@ -206,7 +214,7 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
     const gap = limit.limitM - train.frontM;
     const canStop = !Number.isFinite(gap) || curveSpeed(spec.serviceBrakeMs2, gap - margin) >= entrySpeed;
     if (!canStop) {
-      const why = limit.kind === 'occupied' ? `entry section ${limit.subject ?? ''} is occupied` : limit.kind === 'signal' ? `signal ${limit.subject ?? ''} ahead is at Danger` : 'the line ahead is not clear';
+      const why = limit.kind === 'occupied' ? `entry section ${limit.subject ?? ''} is occupied` : limit.kind === 'signal' ? `signal ${limit.subject ? signalName(net, limit.subject) : ''} ahead is at Danger` : 'the line ahead is not clear';
       const reason = `Waiting to enter: ${why}`;
       if (train.holdReason !== reason) events.push({ kind: 'stopped', text: `${spec.headcode} is waiting outside the boundary: ${why}.` });
       return { sig, train: { ...train, state: 'stopped', status: 'waiting to enter', limit, holdReason: reason, targetSpeedMs: 0 }, events };
@@ -224,7 +232,8 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   const segments: LimitSegment[] = [...pathSegments(net, train), ...(limit.segments ?? [])].filter((x) => x.limitMs < spec.maxSpeedMs - 1e-9);
   const aPlan = spec.serviceBrakeMs2 * SPEED_CONFIG.brakePlanFactor;
   let envelope = spec.maxSpeedMs;
-  if (train.started) {
+  const changingEnds = train.ecs?.reversal != null && (train.ecs.reversal.phase === 'awaiting' || train.ecs.reversal.phase === 'reversing');
+  if (train.started && !changingEnds && !terminalHolds(net, train)) {
     const gap = limit.limitM - train.frontM;
     const v = train.speedMs; // after admission
     const lineSpeed = spec.maxSpeedMs;
@@ -264,7 +273,7 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
     }
   }
   if (protectionStop && limit.kind === 'signal') {
-    events.push({ kind: 'protection-stop', text: `${spec.headcode} stopped hard at signal ${limit.subject ?? ''}: it turned Red too close to stop smoothly.` });
+    events.push({ kind: 'protection-stop', text: `${spec.headcode} stopped hard at signal ${limit.subject ? signalName(net, limit.subject) : ''}: it turned Red too close to stop smoothly.` });
   }
 
   // --- 2. move the front, extending the path as section ends are crossed -------
@@ -273,9 +282,10 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   while (train.exited === null && front > endOf(train, train.path.length - 1) + EPS && guard++ < 8) {
     const last = lastStep(train);
     const leaving = { section: last.section, end: otherEnd(last.enterEnd) };
-    const signal = signalAtEnd(net, leaving);
+    const signal = signalFor(net, train, leaving);
     if (signal) {
-      if ((aspects[signal.id] ?? 'red') === 'red') {
+      const authority = shuntAuthorities(ctx, sig, aspects);
+      if (stopsAt(aspects, authority, train, signal) || mustStopAt(net, train, signal.id)) {
         front = endOf(train, train.path.length - 1); // defensive: must not happen, the limit stops us first
         v1 = 0;
         break;
@@ -283,12 +293,31 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
       const passed = passSignal(ctx, sig, train, signal.id, aspects);
       sig = passed.sig;
       train = passed.train;
-      events.push({ kind: 'passed-signal', signal: signal.id, text: `${spec.headcode} passed signal ${signal.id}.` });
+      events.push({ kind: 'passed-signal', signal: signal.id, text: `${spec.headcode} passed signal ${signal.name}.` });
+      train = ecsPassedSignal(net, train, signal.id, events);
+      train = terminalPassedSignal(net, train, signal.id, events);
       aspects = computeAspects(ctx, sig);
+    } else {
+      // A main-line shunting signal (AJ1/AJ4) is ignored by the train, but a route that starts at it is still released behind the train.
+      const ml = net.signalLeaving(leaving);
+      if (ml?.mainline) {
+        if (sig.routes[ml.id] !== undefined) {
+          const passed = passSignal(ctx, sig, train, ml.id, aspects);
+          sig = passed.sig;
+          train = passed.train;
+          aspects = computeAspects(ctx, sig);
+        }
+        train = ecsPassedSignal(net, train, ml.id, events);
+      }
     }
     const next = nextWithPositions(net, leaving, sig.network.pointPositions);
     if (!next) {
       front = endOf(train, train.path.length - 1);
+      v1 = 0;
+      break;
+    }
+    if (next.kind === 'buffer') {
+      front = endOf(train, train.path.length - 1); // defensive: the buffer limit stops us first
       v1 = 0;
       break;
     }
@@ -330,7 +359,7 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
     if (!route) continue;
     sig = releaseCleared(ctx, sig, route, cleared);
     if (isResidual(sig, routeId)) kept.push(routeId);
-    else events.push({ kind: 'released', route: routeId, text: `Route ${route.from} → ${route.to} released: ${spec.headcode} has cleared it.` });
+    else events.push({ kind: 'released', route: routeId, text: `Route ${ctx.routeName(route.id)} released: ${spec.headcode} has cleared it.` });
   }
   if (kept.length !== train.heldRoutes.length) train = { ...train, heldRoutes: kept };
 
@@ -338,6 +367,15 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   let arrivedNow = false;
   if (train.stop) {
     let st = train.stop;
+    // Reassignment: the route actually set leads to another usable platform, so that is where the train stops.
+    if (st.phase === 'pending' && limit.kind === 'platform' && limit.subject && limit.subject !== st.platform) {
+      const np = net.platforms.get(limit.subject);
+      if (np) {
+        events.push({ kind: 'platform-changed', from: st.platform, to: np.id, text: `${spec.headcode} is routed to ${np.name} instead of ${net.platforms.get(st.platform)?.name ?? st.platform}${st.scheduledPlatform === np.id ? ' (its planned platform)' : ` (planned: ${net.platforms.get(st.scheduledPlatform)?.name ?? st.scheduledPlatform})`}.` });
+        st = { ...st, platform: np.id, section: np.section };
+        train = { ...train, stop: st };
+      }
+    }
     const atStop = limit.kind === 'platform' && v1 < STANDING_MS && limit.limitM - margin - train.frontM <= 1.5;
     if (st.phase === 'pending' && atStop) {
       arrivedNow = true;
@@ -356,6 +394,50 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
       }
     }
     if (st !== train.stop) train = { ...train, stop: st };
+  }
+
+  // --- 4c. ECS siding cycle and reversal (Phase 9) --------------------------------
+  if (train.ecs) {
+    train = ecsAdvance(
+      {
+        net,
+        aspects,
+        occupancy: sig.network.sectionOccupancy,
+        liveHeadcodes: otherHeadcodes,
+        dt,
+        limitKind: limit.kind,
+        limitSubject: limit.subject,
+        gapToStopM: limit.limitM - margin - train.frontM,
+        speedMs: v1,
+        previousSpeedMs: trainIn.speedMs,
+      },
+      train,
+      events,
+    );
+    // A reversal ends the movement the train was running: the routes it still holds are released (the sections it
+    // stands in stay protected by its own occupancy), so the signaller can set the route for its new direction.
+    if (train.ecs && trainIn.ecs && train.ecs.reversals > trainIn.ecs.reversals) {
+      for (const routeId of train.heldRoutes) {
+        const route = ctx.route(routeId);
+        if (route && isResidual(sig, routeId)) sig = unlockRoute(sig, route);
+      }
+      train = { ...train, heldRoutes: [] };
+    }
+    // A reversal changes the path: the occupancy it leaves is identical, but write it again to be certain.
+    sig = writeOccupancy(sig, train);
+  }
+
+  // --- 4d. terminating service (Northbridge): dwell done -> change ends -> new identity -> depart ----------
+  if (train.terminal) {
+    train = terminalAdvance({ net, liveHeadcodes: otherHeadcodes, dt, speedMs: v1 }, train, events);
+    if (train.terminal && trainIn.terminal && train.terminal.reversals > trainIn.terminal.reversals) {
+      for (const routeId of train.heldRoutes) {
+        const route = ctx.route(routeId);
+        if (route && isResidual(sig, routeId)) sig = unlockRoute(sig, route);
+      }
+      train = { ...train, heldRoutes: [] };
+    }
+    sig = writeOccupancy(sig, train);
   }
 
   // --- 5. leaving the area ----------------------------------------------------
@@ -377,7 +459,18 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
   const inPlatform = st !== null && frontSection(train) === st.section;
   let status: OperationalStatus;
   let reason = '';
+  const ej = train.ecs;
   if (train.exited !== null) status = 'exiting';
+  else if (train.terminal && train.terminal.stage === 'reversing') {
+    status = 'reversing';
+    reason = `Changing ends (${Math.ceil(train.terminal.remainingS)} s)`;
+  } else if (ej && ej.reversal && (ej.reversal.phase === 'awaiting' || ej.reversal.phase === 'reversing')) {
+    status = 'reversing';
+    reason = ej.reversal.phase === 'reversing' ? `Changing ends (${Math.ceil(ej.reversal.remainingS)} s)` : ej.reversal.note || 'Stopped and awaiting reversal';
+  } else if (ej && (ej.stage === 'stabled' || ej.stage === 'preparing')) {
+    status = 'stabled';
+    reason = ej.stage === 'stabled' ? `Stabled: ${Math.ceil(ej.stablingRemainingS)} s to go` : ej.note || 'Preparing to depart';
+  }
   else if (!train.started || (train.frontM < 0 && state === 'stopped')) status = 'waiting to enter';
   else if (st?.phase === 'dwelling') {
     status = 'dwelling';
@@ -386,10 +479,10 @@ export function stepTrain(ctx: SignallingContext, sigIn: SignallingState, trainI
     if (arrivedNow) status = 'stopped at platform';
     else if (st?.phase === 'done' && inPlatform) {
       status = 'ready to depart';
-      reason = holdReason(limit) || 'Ready to depart';
+      reason = holdReason(net, limit) || 'Ready to depart';
     } else {
       status = 'stopped at signal';
-      reason = holdReason(limit);
+      reason = holdReason(net, limit);
     }
   } else if (train.frontM < 0) status = 'approaching';
   else if (st?.phase === 'done' && !(rearM(train) >= endOf(train, train.path.findIndex((p) => p.section === st.section)) - EPS)) status = 'departing';

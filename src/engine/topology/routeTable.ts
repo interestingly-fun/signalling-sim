@@ -42,7 +42,7 @@ export function deriveRoutes(net: Network): DerivedRoute[] {
   const routes: DerivedRoute[] = [];
   const idCount = new Map<string, number>();
 
-  const emit = (from: string, to: string, toKind: 'signal' | 'boundary', p: PartialRoute, reverseRunning: boolean) => {
+  const emit = (from: string, to: string, toKind: 'signal' | 'boundary', p: PartialRoute, reverseRunning: boolean, shuntAccess = false) => {
     const base = `${from}>${to}`;
     const n = (idCount.get(base) ?? 0) + 1;
     idCount.set(base, n);
@@ -57,13 +57,19 @@ export function deriveRoutes(net: Network): DerivedRoute[] {
       points: p.points,
       features,
       description: features.length > 0 ? `via ${features.join(', ')}` : 'straight',
+      ...(shuntAccess ? { shuntAccess: true as const } : {}),
     });
   };
+
+  // A main-line shunting signal only STARTS movements into the sidings (it must take its point in the reverse position); movements of
+  // other signals run straight through it, and it never ends a route.
+  const diverges = (signal: { mainline?: boolean }, p: PartialRoute): boolean => !signal.mainline || p.points.some((r) => r.position === 'reverse');
 
   for (const signal of net.signals.values()) {
     const walk = (leaving: SectionEnd, partial: PartialRoute, visited: Set<string>, reverse: boolean): void => {
       for (const step of stepsFrom(net, leaving)) {
-        if (step.kind === 'exit') {
+        if (step.kind === 'exit' || step.kind === 'buffer') {
+          if (!diverges(signal, partial)) continue;
           emit(signal.id, step.boundary, 'boundary', partial, reverse);
           continue;
         }
@@ -82,12 +88,19 @@ export function deriveRoutes(net: Network): DerivedRoute[] {
         const wrong =
           reverse || (section?.line === 'DOWN' && step.enter.end === 'A') || (section?.line === 'UP' && step.enter.end === 'B');
 
+        // Siding track is entered only by a movement that starts at a shunting signal: an ordinary signal reaches the sidings by
+        // a route to its ASSOCIATED shunting signal (below), never straight through it.
+        if (section?.line === 'SIDING' && signal.type !== 'shunting') continue;
+
         const next: PartialRoute = { sections: [...partial.sections, sectionId], points };
         const nextLeaving: SectionEnd = { section: sectionId, end: otherEnd(step.enter.end) };
         const nextSignal = net.signalLeaving(nextLeaving);
-        if (nextSignal) {
-          emit(signal.id, nextSignal.id, 'signal', next, wrong);
+        if (nextSignal && !nextSignal.mainline) {
+          if (diverges(signal, next)) emit(signal.id, nextSignal.id, 'signal', next, wrong);
         } else {
+          // A shunting access route: an ordinary signal to the main-line shunting signal it is associated with. Ordinary movements
+          // still run straight on through that signal (the walk continues below).
+          if (nextSignal?.mainline && signal.type !== 'shunting' && nextSignal.associatedMain?.includes(signal.id)) emit(signal.id, nextSignal.id, 'signal', next, wrong, true);
           walk(nextLeaving, next, new Set(visited).add(sectionId), wrong);
         }
       }

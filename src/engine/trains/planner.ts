@@ -70,7 +70,7 @@ function computePlans(ctx: SignallingContext, q: PlanQuery): ServicePlan[] {
     if (q.lengthM !== undefined && !platformFit(net, q.platform, q.lengthM).ok) return [];
   }
   const start = net.sections.get(boundary.at.section);
-  if (!start || !classAllowsLine(q.trainClass, start.line, q.model)) return [];
+  if (!start || !classAllowsLine(q.trainClass, start.line, q.model) || (q.trainClass === 5 && start.line === 'BRANCH')) return [];
 
   const plans: ServicePlan[] = [];
   const path: PathStep[] = [{ section: start.id, enterEnd: boundary.at.end }];
@@ -80,12 +80,14 @@ function computePlans(ctx: SignallingContext, q: PlanQuery): ServicePlan[] {
     if (plans.length >= MAX_PLANS || path.length > MAX_DEPTH) return;
     const last = path[path.length - 1] as PathStep;
     for (const step of stepsFrom(net, { section: last.section, end: otherEnd(last.enterEnd) })) {
+      if (step.kind === 'buffer') continue;
       if (step.kind === 'exit') {
         if (step.boundary === q.destination && (!platformSection || seen.has(platformSection))) plans.push(describe(ctx, [...path]));
         continue;
       }
       const sec = net.sections.get(step.enter.section);
-      if (!sec || seen.has(sec.id) || !classAllowsLine(q.trainClass, sec.line, q.model)) continue;
+      // The sidings are never part of a through journey between two boundaries (the ECS cycle planner handles them).
+      if (!sec || seen.has(sec.id) || sec.line === 'SIDING' || (q.trainClass === 5 && sec.line === 'BRANCH') || !classAllowsLine(q.trainClass, sec.line, q.model)) continue;
       seen.add(sec.id);
       path.push({ section: sec.id, enterEnd: step.enter.end });
       walk();
@@ -115,7 +117,7 @@ function describe(ctx: SignallingContext, path: PathStep[]): ServicePlan {
     const found = ctx.from(m.signal).find((r) => r.sections.length === sections.length && r.sections.every((s, i) => s === sections[i]) && (next ? r.to === next.signal : r.toKind === 'boundary'));
     if (found) {
       movements.push(found.id);
-      if (net.signals.get(m.signal)?.type === 'manual') manual.push(found.id);
+      if (net.signals.get(m.signal)?.type !== 'automatic') manual.push(found.id);
     }
   });
 

@@ -18,17 +18,17 @@ export function setSignalOverride(ctx: SignallingContext, state: SignallingState
   const signal = ctx.net.signals.get(signalId);
   if (!signal) return { ok: false, state, rejection: { code: 'NO_SUCH_SIGNAL', subject: signalId, message: `There is no signal ${signalId}.` } };
   if (signal.type !== 'automatic') {
-    return { ok: false, state, rejection: { code: 'NOT_AUTOMATIC', subject: signalId, message: `Signal ${signalId} is a manual signal: it is already at Red until a route is set.` } };
+    return { ok: false, state, rejection: { code: 'NOT_AUTOMATIC', subject: signalId, message: `Signal ${ctx.signalName(signalId)} is a manual signal: it is already at Red until a route is set.` } };
   }
   if (signalOverride(state, signalId) === override) {
     // Nothing to change: hand back the identical state, like every other refused or no-op operation.
-    return { ok: true, state, message: override === 'FORCED_DANGER' ? `Signal ${signalId} is already forced to Danger.` : `Signal ${signalId} is already automatic.` };
+    return { ok: true, state, message: override === 'FORCED_DANGER' ? `Signal ${ctx.signalName(signalId)} is already forced to Danger.` : `Signal ${ctx.signalName(signalId)} is already automatic.` };
   }
   if (override === 'FORCED_DANGER') {
-    return { ok: true, state: { ...state, signalOverrides: { ...state.signalOverrides, [signalId]: 'FORCED_DANGER' } }, message: `Signal ${signalId} forced to Danger (operator override).` };
+    return { ok: true, state: { ...state, signalOverrides: { ...state.signalOverrides, [signalId]: 'FORCED_DANGER' } }, message: `Signal ${ctx.signalName(signalId)} forced to Danger (operator override).` };
   }
   const rest = Object.fromEntries(Object.entries(state.signalOverrides).filter(([id]) => id !== signalId));
-  return { ok: true, state: { ...state, signalOverrides: rest }, message: `Signal ${signalId} returned to automatic.` };
+  return { ok: true, state: { ...state, signalOverrides: rest }, message: `Signal ${ctx.signalName(signalId)} returned to automatic.` };
 }
 
 /** IDs of signals currently forced to Danger. */

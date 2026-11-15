@@ -70,7 +70,10 @@ export interface StopRequest {
 export type StopPhase = 'pending' | 'dwelling' | 'done' | 'departed';
 
 export interface StopState {
+  /** The platform the train is ACTUALLY stopping at: the one the signaller's route takes it to. */
   readonly platform: string;
+  /** The platform the timetable planned. Never changes; compare with `platform` to see a reassignment. */
+  readonly scheduledPlatform: string;
   /** Platform section ID. */
   readonly section: string;
   readonly dwellS: number;
@@ -89,6 +92,8 @@ export type OperationalStatus =
   | 'stopped at platform'
   | 'dwelling'
   | 'ready to depart'
+  | 'reversing'
+  | 'stabled'
   | 'departing'
   | 'exiting'
   | 'completed';
@@ -102,7 +107,7 @@ export interface PathStep {
 export type MovementState = 'ready' | 'accelerating' | 'cruising' | 'braking' | 'stopped' | 'finished';
 
 /** What currently limits how far the train may go. */
-export type LimitKind = 'signal' | 'points' | 'occupied' | 'horizon' | 'exit' | 'platform' | 'restricted';
+export type LimitKind = 'signal' | 'points' | 'occupied' | 'horizon' | 'exit' | 'platform' | 'restricted' | 'buffer';
 
 /** Speed information for the performance inspector and the overspeed warning (Phase 8). Information only. */
 export interface SpeedInfo {
@@ -128,6 +133,98 @@ export interface Limit {
   readonly marginM?: number;
   /** The speed-restricted stretches of the sections ahead the scan walked through (Phase 8). */
   readonly segments?: readonly LimitSegment[];
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9: reversal and the ECS siding cycle
+// ---------------------------------------------------------------------------
+
+/**
+ * The physical stages of a reversal (a driver changing ends at a standstill):
+ *   approaching : running up to the reversal point (the stop signal, or the buffer stops of a siding)
+ *   braking     : slowing for it
+ *   awaiting    : stopped; the train must be wholly inside the bay and standing before it may begin
+ *   reversing   : the driver is changing ends (a fixed time, the train does not move)
+ *   ready       : the train now faces the other way and waits for authority to leave
+ */
+export type ReversalPhase = 'approaching' | 'braking' | 'awaiting' | 'reversing' | 'ready';
+
+export interface ReversalState {
+  /** A reversal bay ID, or a siding ID when the train changes ends at the buffer stops of its siding. */
+  readonly bay: string;
+  readonly kind: 'bay' | 'siding';
+  readonly phase: ReversalPhase;
+  /** Seconds of changing ends still to go (only while `reversing`). */
+  readonly remainingS: number;
+  /** Why the reversal cannot start, or ''. */
+  readonly note: string;
+}
+
+/** The service an ECS train becomes when it leaves its siding. */
+export interface OnwardService {
+  readonly headcode: string;
+  readonly trainClass: 1 | 2 | 5;
+  /** Exit boundary. */
+  readonly destination: string;
+}
+
+/**
+ *   inbound   : on its way to the siding (possibly reversing on the way)
+ *   stabled   : wholly inside the siding, standing; the stabling timer runs
+ *   preparing : stabling over: the onward service is set up and the train changes ends
+ *   ready     : facing out, waiting for the exit signal
+ *   leaving   : the front has passed the exit signal; the rear is still in the siding
+ *   onward    : out of the siding, running its onward service
+ */
+export type EcsStage = 'inbound' | 'stabled' | 'preparing' | 'ready' | 'leaving' | 'onward';
+
+/**
+ * Northbridge: a terminating service. The same physical train arrives at a terminus platform, stops, dwells, changes ends
+ * (never while moving) and leaves through the platform's departure signal, usually under a new headcode.
+ *   inbound   : on its way to (or standing in) the terminus platform
+ *   reversing : standing, changing ends
+ *   ready     : changed ends, waiting for the departure route and signal
+ *   leaving   : front past the departure signal, rear still in the platform
+ *   done      : the platform is clear
+ */
+export type TerminalStage = 'inbound' | 'reversing' | 'ready' | 'leaving' | 'done';
+export interface TerminalJob {
+  readonly stage: TerminalStage;
+  readonly incomingHeadcode: string;
+  /** Planned terminal (Northbridge platform id); the platform actually used is the one the signaller's route reaches. */
+  readonly terminal: string;
+  readonly onward: OnwardService;
+  /** Stops still to make once the current stop has been left (the terminal stop, then an optional westbound call). */
+  readonly stops: readonly { readonly platform: string; readonly dwellS: number }[];
+  readonly approachPlan: readonly string[];
+  readonly departurePlan: readonly string[];
+  readonly remainingS: number;
+  readonly reversals: number;
+  readonly note: string;
+  /** The terminus platform section the train actually stands in (set when it begins to change ends). */
+  readonly at?: string;
+}
+
+/** One ECS siding cycle, carried by the physical train through all its stages. */
+export interface EcsJob {
+  readonly incomingHeadcode: string;
+  readonly siding: string;
+  /** Reversal bays still to be used on the way (in order). Before the siding: the approach; after it: the departure. */
+  readonly bayQueue: readonly string[];
+  /** The departure's reversal bays, loaded into `bayQueue` once the train has changed ends in the siding. */
+  readonly departureBays: readonly string[];
+  /** Movement IDs of the approach and of the departure (informational: what the signaller sets). */
+  readonly approachPlan: readonly string[];
+  readonly departurePlan: readonly string[];
+  readonly stablingS: number;
+  readonly stablingRemainingS: number;
+  readonly onward: OnwardService;
+  readonly stage: EcsStage;
+  readonly reversal: ReversalState | null;
+  /** Reversals completed so far (bays and the siding). */
+  readonly reversals: number;
+  /** Why the train cannot yet prepare or leave, or ''. */
+  readonly note: string;
 }
 
 export interface Train {
@@ -162,6 +259,10 @@ export interface Train {
   readonly speedInfo: SpeedInfo;
   /** Movement IDs (signal-to-signal routes) of the service plan the signaller is expected to set. Informational. */
   readonly plan: readonly string[];
+  /** Phase 9: the ECS siding cycle this train is working, or null for an ordinary service. */
+  readonly ecs: EcsJob | null;
+  /** Northbridge: the terminating service this train works, or null/absent. */
+  readonly terminal?: TerminalJob | null;
 }
 
 export type TrainEvent =
@@ -173,10 +274,27 @@ export type TrainEvent =
   | { readonly kind: 'released'; readonly route: string; readonly text: string }
   | { readonly kind: 'protection-stop'; readonly text: string }
   | { readonly kind: 'admitted'; readonly text: string }
+  | { readonly kind: 'platform-changed'; readonly from: string; readonly to: string; readonly text: string }
   | { readonly kind: 'arrived'; readonly platform: string; readonly text: string }
   | { readonly kind: 'ready'; readonly platform: string; readonly text: string }
   | { readonly kind: 'departed'; readonly platform: string; readonly text: string }
   | { readonly kind: 'exited'; readonly text: string }
   | { readonly kind: 'overspeed'; readonly text: string }
   | { readonly kind: 'overspeed-ended'; readonly text: string }
-  | { readonly kind: 'finished'; readonly text: string };
+  | { readonly kind: 'finished'; readonly text: string }
+  /** Phase 9: a step of the ECS siding cycle or of a reversal. `what` says which (the event log uses it to group them). */
+  | { readonly kind: 'ecs'; readonly what: EcsEventKind; readonly text: string };
+
+export type EcsEventKind =
+  | 'approaching-reversal'
+  | 'stopped-for-reversal'
+  | 'reversal-complete'
+  | 'entering-siding'
+  | 'stabled'
+  | 'stabling-complete'
+  | 'new-headcode'
+  | 'new-class'
+  | 'authorised'
+  | 'leaving-siding'
+  | 'siding-released'
+  | 'blocked';

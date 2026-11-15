@@ -28,7 +28,7 @@ export function stepFleet(ctx: SignallingContext, sigIn: SignallingState, trains
   const events: TrainEvent[] = [];
   const out = trains.map((t) => {
     if (t.finished || !t.started) return t;
-    const r = stepTrain(ctx, sig, t, dt);
+    const r = stepTrain(ctx, sig, t, dt, t.ecs || t.terminal ? new Set(trains.filter((o) => o !== t && !o.finished).map((o) => o.spec.headcode)) : undefined);
     sig = r.sig;
     events.push(...r.events);
     return r.train;

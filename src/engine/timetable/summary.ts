@@ -44,7 +44,7 @@ export function summarise(shiftId: number, services: readonly ServiceSchedule[],
     if (d.entry !== null) entry.push(d.entry);
     if (d.arrival !== null) {
       arrival.push(d.arrival);
-      stopped++;
+      if (!s.ecs) stopped++; // an ECS cycle's "arrival" is being stabled, not a station stop
     }
     if (d.departure !== null) departure.push(d.departure);
     if (d.exit !== null) {

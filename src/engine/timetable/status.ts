@@ -10,6 +10,8 @@ export type ServiceStatus =
   | 'Delayed'
   | 'Entered area'
   | 'Held at signal'
+  | 'Reversing'
+  | 'Stabled'
   | 'Approaching station'
   | 'At platform'
   | 'Ready to depart'
@@ -31,9 +33,22 @@ export function deriveStatus(s: ServiceSchedule, a: ServiceActual, train: Train 
     if (nowS - s.entryS >= DELAYED_WAITING_S) return 'Delayed';
     return nowS - (a.createdS ?? nowS) < 2 && !train.holdReason.startsWith('Waiting to enter') ? 'Ready to enter' : 'Waiting for entry';
   }
+  if (s.ecs) {
+    if (train.status === 'reversing') return 'Reversing';
+    if (train.status === 'stabled') return 'Stabled';
+  }
   const stop = train.stop;
   // Stopped inside the area at a Danger signal or an occupied section: waiting for a route or for the line ahead to clear.
   if (train.state === 'stopped' && train.started && (train.limit.kind === 'signal' || train.limit.kind === 'occupied') && !(stop && (stop.phase === 'dwelling' || stop.phase === 'done'))) return 'Held at signal';
+  if (s.ecs?.terminal && stop) {
+    // terminating service: approach (maybe a call at Northbridge-West), dwell at the terminus, change ends, depart
+    const job = train.terminal;
+    if (job && (job.stage === 'ready' || job.stage === 'leaving' || job.stage === 'done')) return a.departureS === null ? 'Ready to depart' : 'Departed station';
+    if (stop.phase === 'pending') return train.status === 'approaching platform' || (train.status === 'braking' && train.limit.kind === 'platform') ? 'Approaching station' : 'Entered area';
+    if (stop.phase === 'dwelling') return 'At platform';
+    if (stop.phase === 'done') return job && job.stage === 'inbound' && job.stops.length > 0 ? 'Departed station' : 'At platform';
+    return 'En route to exit';
+  }
   if (s.stops && stop) {
     if (stop.phase === 'pending') return train.status === 'approaching platform' || (train.status === 'braking' && train.limit.kind === 'platform') ? 'Approaching station' : 'Entered area';
     if (stop.phase === 'dwelling') return 'At platform';

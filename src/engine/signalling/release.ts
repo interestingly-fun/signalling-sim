@@ -20,11 +20,11 @@ import type { CancelResult, Rejection, SignallingState } from './types';
 export function validateCancel(ctx: SignallingContext, state: SignallingState, routeId: string): Rejection | null {
   const route = ctx.route(routeId);
   if (!route || state.routes[route.from] !== routeId) {
-    return { code: 'NOT_ESTABLISHED', subject: routeId, message: `Route ${routeId} is not established.` };
+    return { code: 'NOT_ESTABLISHED', subject: routeId, message: `Route ${ctx.routeName(routeId)} is not established.` };
   }
   for (const s of route.sections) {
     if (isSectionOccupied(state, s)) {
-      return { code: 'CANCEL_OCCUPIED', subject: s, message: `Route ${routeLabel(route)} cannot be cancelled: section ${s} is occupied.` };
+      return { code: 'CANCEL_OCCUPIED', subject: s, message: `Route ${routeLabel(ctx, route)} cannot be cancelled: section ${s} is occupied.` };
     }
   }
   return null;
@@ -35,15 +35,15 @@ export function cancelRoute(ctx: SignallingContext, state: SignallingState, rout
   const rejection = validateCancel(ctx, state, routeId);
   if (rejection) return { ok: false, state, rejection };
   const route = ctx.route(routeId);
-  if (!route) return { ok: false, state, rejection: { code: 'NOT_ESTABLISHED', message: `Route ${routeId} is not established.` } };
-  return { ok: true, state: unlockRoute(state, route), route, message: `Route ${routeLabel(route)} cancelled. Signal ${route.from} returns to Red.` };
+  if (!route) return { ok: false, state, rejection: { code: 'NOT_ESTABLISHED', message: `Route ${ctx.routeName(routeId)} is not established.` } };
+  return { ok: true, state: unlockRoute(state, route), route, message: `Route ${routeLabel(ctx, route)} cancelled. Signal ${ctx.signalName(route.from)} returns to Red.` };
 }
 
 /** Cancels whichever route is established from the given entrance signal. */
 export function cancelRouteFrom(ctx: SignallingContext, state: SignallingState, signalId: string): CancelResult {
   const routeId = state.routes[signalId];
   if (routeId === undefined) {
-    return { ok: false, state, rejection: { code: 'NOT_ESTABLISHED', subject: signalId, message: `No route is established from signal ${signalId}.` } };
+    return { ok: false, state, rejection: { code: 'NOT_ESTABLISHED', subject: signalId, message: `No route is established from signal ${ctx.signalName(signalId)}.` } };
   }
   return cancelRoute(ctx, state, routeId);
 }

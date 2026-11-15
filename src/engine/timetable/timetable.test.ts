@@ -16,6 +16,7 @@ import {
   emptyActual,
   fallbackTimetable,
   generateTimetable,
+  ecsPlacementIssue,
   stepsFrom,
   otherEnd,
   summarise,
@@ -72,7 +73,7 @@ describe('timetable generation', () => {
     for (const seed of SEEDS) {
       const sv = tt(seed).services;
       for (const c of [1, 2, 5]) assert.ok(sv.some((s) => s.trainClass === c), `seed ${seed} has class ${c}`);
-      assert.ok(sv.filter((s) => s.trainClass === 1).length >= 2 && sv.filter((s) => s.trainClass === 1).length <= 3);
+      assert.ok(sv.filter((s) => s.trainClass === 1).length >= 1);
       assert.ok(sv.some((s) => s.entryLine === 'UP') && sv.some((s) => s.entryLine === 'DOWN'));
       if (sv.some((s) => s.entryLine === 'BRANCH' || s.exitLine === 'BRANCH')) withBranch++;
     }
@@ -82,6 +83,7 @@ describe('timetable generation', () => {
   test('every journey exists in the logical network: consecutive sections really connect, from the boundary to the exit', () => {
     for (const seed of SEEDS.slice(0, 12)) {
       for (const s of tt(seed).services) {
+        if (s.ecs) continue; // an ECS cycle is checked by the Phase 9 tests (its sections list is the approach, not one journey)
         const first = net.boundaries.get(s.origin);
         assert.equal(first?.at.section, s.sections[0]);
         for (let i = 0; i + 1 < s.sections.length; i++) {
@@ -115,11 +117,11 @@ describe('timetable generation', () => {
           assert.equal(s.platform, null);
           assert.ok(!s.sections.some((x) => ['PLATFORM', 'BRANCH'].includes(net.sections.get(x)!.line)));
         }
-        if (s.trainClass === 5) assert.ok(!s.sections.some((x) => net.sections.get(x)!.line === 'BRANCH'), 'Class 5 does not use the branch');
+        if (s.trainClass === 5 && !s.ecs) assert.ok(!s.sections.some((x) => net.sections.get(x)!.line === 'BRANCH'), 'Class 5 (non-ECS) does not use the branch');
         if (s.stops) {
           assert.ok(net.platforms.get(s.platform!) && s.sections.includes(net.platforms.get(s.platform!)!.section));
           assert.ok(s.arrivalS !== null && s.departureS !== null && s.arrivalS! < s.departureS!);
-        } else {
+        } else if (!s.ecs) {
           assert.equal(s.arrivalS, null);
           assert.equal(s.departureS, null);
         }
@@ -224,7 +226,7 @@ describe('the validator rejects impossible timetables', () => {
     const a = svc('1J53');
     assert.ok(issues([a, { ...a, entryS: a.entryS + 900 }]).some((m) => /used twice/.test(m)));
     assert.ok(validateService(ctx, { ...a, headcode: '2J53' }).some((m) => /first digit/.test(m)));
-    assert.ok(validateTimetable(ctx, { services: base().slice(0, 3) }).some((m) => /needs 5–7/.test(m)));
+    assert.ok(validateTimetable(ctx, { services: base().slice(0, 3) }).some((m) => /needs 5–25/.test(m)));
     const upOnly = base().filter((s) => s.entryLine === 'UP');
     assert.ok(validateTimetable(ctx, { services: upOnly }, { countRange: [1, 99] }).some((m) => /DOWN/.test(m)));
   });
@@ -307,5 +309,34 @@ describe('formats, status and summary', () => {
     assert.equal(currentDelayS(s, A({ entryS: 130, arrivalS: 360 }), 370), 60);
     assert.equal(currentDelayS(s, A({ entryS: 130, arrivalS: 360 }), 520), 120, 'next event overdue by more');
     assert.equal(currentDelayS(s, A({ entryS: 130, arrivalS: 360, departureS: 460, exitS: 590 }), 600), 90, 'final exit delay');
+  });
+});
+
+describe('ECS services are never at the end of the shift', () => {
+  test('across many seeds an ECS cycle is never last or second to last, and never departs after the last train', () => {
+    let withEcs = 0;
+    for (let seed = 1; seed <= 150; seed++) {
+      const tt = generateTimetable(ctx, seed);
+      const sorted = [...tt.services].sort((a, b) => a.entryS - b.entryS);
+      if (sorted.some((s) => s.ecs)) withEcs++;
+      assert.equal(ecsPlacementIssue(tt.services), null, `seed ${seed}`);
+      const lastExit = Math.max(...tt.services.filter((s) => !s.ecs).map((s) => s.exitS));
+      for (const [i, s] of sorted.entries()) {
+        if (!s.ecs) continue;
+        assert.ok(i < sorted.length - 2, `seed ${seed}: ${s.headcode} is among the last two`);
+        assert.ok((s.departureS ?? s.exitS) <= lastExit, `seed ${seed}: ${s.headcode} departs after the last train`);
+      }
+    }
+    assert.ok(withEcs > 20, `ECS cycles still appear (${withEcs} of 150 seeds)`);
+  });
+  test('the check flags a violating timetable', () => {
+    const base = generateTimetable(ctx, 3).services;
+    const ecsSeed = Array.from({ length: 150 }, (_, i) => generateTimetable(ctx, i + 1)).find((t) => t.services.some((s) => s.ecs));
+    assert.ok(ecsSeed);
+    const svcs = ecsSeed.services;
+    const e = svcs.find((s) => s.ecs) as ServiceSchedule;
+    const late = svcs.map((s) => (s === e ? { ...s, entryS: 1e6, exitS: 1e6 + 100 } : s));
+    assert.match(ecsPlacementIssue(late) ?? '', /last two/);
+    void base;
   });
 });

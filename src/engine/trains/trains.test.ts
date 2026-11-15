@@ -174,7 +174,7 @@ describe('movement', () => {
     const e = world(eastboundRoutes(), JOURNEYS[1]);
     run(e, (x) => x.train.finished);
     assert.ok(e.train.path.every((s) => s.enterEnd === 'A'));
-    assert.deepEqual(sectionsOf(e.train), ['UPW2', 'UPW1', 'UP1', 'UP2', 'UP3', 'UP4', 'UP5', 'UP6', 'UP7', 'UP8', 'UP9', 'UP10', 'UP11', 'UP12', 'UPE1']);
+    assert.deepEqual(sectionsOf(e.train), ['UPW2', 'UPW1', 'UP1', 'UP2', 'UP3', 'UP4', 'UP5', 'UP6', 'UP7', 'UP8', 'UP9', 'UP10', 'UP11', 'UP11B', 'UP12W', 'UPX', 'UP12', 'UPE1']);
   });
 
   test('stays on the mainline: no platform loop, crossover or branch section is ever entered', () => {
@@ -270,7 +270,7 @@ describe('signals', () => {
     assert.ok(maxFront > d2 - 30, `stopped close to the margin, not miles away (${maxFront})`);
     assert.equal(w.train.speedMs, 0);
     assert.equal(w.train.state, 'stopped');
-    assert.match(w.train.holdReason, /signal D2/);
+    assert.match(w.train.holdReason, /signal AJ07/);
     assert.ok(maxDecel <= 0.9 * 1.25, `braked at about the service rate (max ${maxDecel.toFixed(2)} m/s²)`);
     assert.ok(!w.events.some((e) => e.kind === 'protection-stop'), 'planned stop, not an emergency one');
     assert.ok(w.events.some((e) => e.kind === 'stopped'));
@@ -311,7 +311,7 @@ describe('signals', () => {
   test('holds at the second signal too, then goes when it is cleared (D3 is Red until D3>D4 is set)', () => {
     const w = world(route(createSignallingState(net), 'D2', 'D3'));
     run(w, (x) => x.train.state === 'stopped' && x.train.frontM > PRE + L('DN1') + L('DN2'));
-    assert.match(w.train.holdReason, /signal D3/);
+    assert.match(w.train.holdReason, /signal AJ08/);
     w.sig = route(w.sig, 'D3', 'D4');
     run(w, (x) => x.train.finished);
     assert.equal(w.train.exited, 'W-OUT');
@@ -371,7 +371,7 @@ describe('signals', () => {
     run(w, (x) => x.time > 400 || x.train.state === 'stopped');
     assert.deepEqual(sectionsOf(w.train), ['DNE2', 'DNE1', 'DN1', 'DN2', 'DN3', 'DN4', 'P2E', 'P2'], 'followed the established Platform 2 route and nothing else');
     assert.equal(w.train.state, 'stopped');
-    assert.match(w.train.holdReason, /signal P2W/);
+    assert.match(w.train.holdReason, /signal AJ09/);
   });
 });
 

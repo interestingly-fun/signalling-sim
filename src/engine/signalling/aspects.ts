@@ -5,6 +5,8 @@
  *
  * Which movement does a signal protect?
  *   manual    : the route established from it (none = Red).
+ *   shunting  : as manual (Phase 9); it shows Stop or Proceed only. Proceed needs ITS OWN proven route. A main signal whose route
+ *               ends at it (shunting access) clears like any signal whose next signal is at Stop: Caution (yellow).
  *   automatic : its single derived movement, always.
  *
  * Does that movement allow the signal to clear?
@@ -78,7 +80,7 @@ function clearableMovement(ctx: SignallingContext, state: SignallingState, signa
   const signal = ctx.net.signals.get(signalId);
   if (!signal) return null;
 
-  if (signal.type === 'manual') {
+  if (signal.type !== 'automatic') {
     const routeId = state.routes[signalId];
     const route = routeId === undefined ? undefined : ctx.route(routeId);
     return route && isRouteProven(state, route) ? route : null;
@@ -117,9 +119,22 @@ function calculateAspects(ctx: SignallingContext, state: SignallingState, honour
     const forced = honourOverrides && state.signalOverrides[signalId] === 'FORCED_DANGER';
     const movement = forced ? null : clearableMovement(ctx, state, signalId);
     let aspect: Aspect = 'red';
+    const sd = ctx.net.signals.get(signalId);
+    if (sd?.mainline) {
+      // A main-line shunting signal (AJ1/AJ4) shows Proceed (drawn green) ONLY for the shunting route set FROM IT, proven: the
+      // points set and locked for it, the track clear. It never clears because an associated main signal is at Danger (or at
+      // anything else), and a route set from a main signal does not clear it. Through trains ignore it either way.
+      aspect = movement ? 'green' : 'red';
+      memo.set(signalId, aspect);
+      return aspect;
+    }
     if (movement) {
-      const next: Aspect = movement.toKind === 'boundary' ? 'green' : aspectOf(movement.to, new Set(visiting).add(signalId));
-      aspect = aspectBehind(next);
+      // A shunting signal ahead always counts as a stop signal for the one behind it (a route that ends at it ends at a stop).
+      const toShunting = movement.toKind === 'signal' && ctx.net.signals.get(movement.to)?.type === 'shunting';
+      const toBuffer = movement.toKind === 'boundary' && ctx.net.boundaries.get(movement.to)?.buffer === true;
+      const next: Aspect = toShunting || toBuffer ? 'red' : movement.toKind === 'boundary' ? 'green' : aspectOf(movement.to, new Set(visiting).add(signalId));
+      // A shunting signal shows only Stop (red) or Proceed (shown here as yellow, "proceed with caution"): never a speed aspect.
+      aspect = ctx.net.signals.get(signalId)?.type === 'shunting' ? 'green' : aspectBehind(next);
     }
     memo.set(signalId, aspect);
     return aspect;

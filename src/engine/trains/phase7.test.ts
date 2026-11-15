@@ -363,7 +363,7 @@ describe('operating-class rules with models', () => {
       for (const f of getModel(model)!.formations) {
         assert.equal(create(5, model, f.id, 'W-IN', 'N-OUT').ok, true, `${model} ${f.id} as Class 5 runs through`);
         assert.equal(create(5, model, f.id, 'N-IN', 'W-OUT', 'PLAT2').ok, true, `${model} ${f.id} as Class 5 stops`);
-        assert.equal(create(5, model, f.id, 'M-IO', 'N-OUT').ok, false, `${model} ${f.id} as Class 5 keeps the existing no-branch rule`);
+        assert.equal(create(5, model, f.id, 'M-IO', 'N-OUT').ok, false, `${model} ${f.id} as a through Class 5 keeps the no-branch rule (only ECS cycles use the branch, Phase 9)`);
       }
     }
   });

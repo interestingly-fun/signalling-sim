@@ -31,7 +31,7 @@ export function diffSignalling(ctx: SignallingContext, prev: SignallingState, ne
   const out: SignallingChange[] = [];
   const label = (routeId: string): string => {
     const r = ctx.route(routeId);
-    return r ? `${r.from} → ${r.to}` : routeId;
+    return r ? ctx.routeName(routeId) : routeId;
   };
 
   // routes established / cancelled
@@ -75,8 +75,8 @@ export function diffSignalling(ctx: SignallingContext, prev: SignallingState, ne
 
   // forced Danger
   if (prev.signalOverrides !== next.signalOverrides) {
-    for (const s of keys(next.signalOverrides)) if (prev.signalOverrides[s] === undefined) out.push({ category: 'signal', level: 'warn', text: `Signal ${s} forced to Danger.` });
-    for (const s of keys(prev.signalOverrides)) if (next.signalOverrides[s] === undefined) out.push({ category: 'signal', level: 'ok', text: `Signal ${s} restored from forced Danger.` });
+    for (const s of keys(next.signalOverrides)) if (prev.signalOverrides[s] === undefined) out.push({ category: 'signal', level: 'warn', text: `Signal ${ctx.signalName(s)} forced to Danger.` });
+    for (const s of keys(prev.signalOverrides)) if (next.signalOverrides[s] === undefined) out.push({ category: 'signal', level: 'ok', text: `Signal ${ctx.signalName(s)} restored from forced Danger.` });
   }
 
   // manual signal aspects: only when something that decides them changed
@@ -84,12 +84,12 @@ export function diffSignalling(ctx: SignallingContext, prev: SignallingState, ne
     const a = computeAspects(ctx, prev);
     const b = computeAspects(ctx, next);
     for (const [id, sig] of ctx.net.signals) {
-      if (sig.type !== 'manual') continue;
+      if (sig.type === 'automatic') continue;
       const was = a[id];
       const now = b[id];
       if (!was || !now || was === now) continue;
-      if (was === 'red') out.push({ category: 'signal', level: 'info', text: `Signal ${id} cleared: ${ASPECT_WORD[now]}.` });
-      else if (now === 'red') out.push({ category: 'signal', level: 'info', text: `Signal ${id} returned to Danger.` });
+      if (was === 'red') out.push({ category: 'signal', level: 'info', text: `Signal ${ctx.signalName(id)} cleared: ${ASPECT_WORD[now]}.` });
+      else if (now === 'red') out.push({ category: 'signal', level: 'info', text: `Signal ${ctx.signalName(id)} returned to Danger.` });
       // proceed → another proceed aspect is only the signal ahead changing: not logged
     }
   }

@@ -15,8 +15,14 @@ export interface SpeedConfig {
   readonly lineMph: Readonly<Record<LineKind, number>>;
   /** A section on the diverging leg of a set of points (the reverse leg) is limited to this, whatever line it is on. */
   readonly divergingMph: number;
-  /** Low-speed movements. Ashcombe has no sidings, so nothing is listed in `sidingSections`; the value is here for later layouts. */
-  readonly sidingMph: number;
+  /**
+   * Inside a siding (Phase 9 correction): the track of every siding declared in the topology (`NetworkDef.sidings`, so a new map's sidings
+   * get it automatically) is limited to this, for every train and every class, entering, stabled movements and leaving. It applies
+   * to the whole siding track and, by the usual rule, until the REAR of the train has left it. `sidingSections` adds further sections.
+   * The siding lead and throat (the other SIDING-line sections) are NOT interior: they take `lineMph.SIDING` (and any other restriction),
+   * so the approach is limited separately.
+   */
+  readonly sidingInteriorMph: number;
   readonly sidingSections: readonly string[];
   /** Individual sections with their own limit (the branch junction legs). The most restrictive applicable limit always wins. */
   readonly sectionMph: Readonly<Record<string, number>>;
@@ -30,9 +36,10 @@ export interface SpeedConfig {
 }
 
 export const SPEED_CONFIG: SpeedConfig = {
-  lineMph: { UP: 125, DOWN: 125, BRANCH: 75, PLATFORM: 45, CROSSOVER: 40, LINK: 40 },
+  // SIDING here is the siding lead and throat (the approach); the siding tracks themselves take `sidingInteriorMph`.
+  lineMph: { UP: 125, DOWN: 125, BRANCH: 75, PLATFORM: 45, CROSSOVER: 40, LINK: 40, SIDING: 15 },
   divergingMph: 40,
-  sidingMph: 15,
+  sidingInteriorMph: 5,
   sidingSections: [],
   sectionMph: { LA1: 40, LA2: 40, LA3: 40, LB1: 40, LBX: 40, LB2: 40 },
   overspeedToleranceMph: 1,

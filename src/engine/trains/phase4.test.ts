@@ -330,7 +330,7 @@ describe('M3 dwell and departure', () => {
     assert.equal(t.status, 'ready to depart');
     assert.ok(t.speedMs < 0.02);
     assert.equal(frontSection(t), 'P2');
-    assert.match(t.holdReason, /signal P2W/);
+    assert.match(t.holdReason, /signal AJ09/);
     assert.equal(w.sig.sectionLocks['P2'], 'D2>P2W', 'platform protection is still held');
     assert.ok(w.sig.residual['D2>P2W']);
   });

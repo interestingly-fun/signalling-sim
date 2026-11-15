@@ -18,6 +18,33 @@ import type { StockRef } from '../rollingstock';
 
 export type LineName = 'UP' | 'DOWN' | 'BRANCH';
 
+/**
+ * Phase 9: an ECS siding cycle. The SAME physical train is timetabled once: it enters as the Class 5 ECS `headcode`,
+ * reverses where the topology and its length allow, stables in `siding` for `stablingS`, then (at departure preparation)
+ * becomes the `onward` service and leaves. Model and formation never change; `destination` of the schedule is the onward one.
+ */
+export interface EcsSchedule {
+  readonly siding: string;
+  /** Planned stabling time: from fully stabled until the train begins preparing to leave. */
+  readonly stablingS: number;
+  readonly onward: { readonly headcode: string; readonly trainClass: 1 | 2 | 5; readonly destination: string; readonly exitLine: LineName };
+  /** Movements to set, in order, for the approach and for the departure. */
+  readonly approach: readonly string[];
+  readonly departure: readonly string[];
+  /** Reversal bays used, in order, on the approach and on the departure. */
+  readonly approachBays: readonly string[];
+  readonly departureBays: readonly string[];
+  /**
+   * Northbridge: set when this cycle is a TERMINATING service rather than a siding cycle. `siding` then holds the terminus
+   * platform id, `stablingS` the dwell at it, and `approach` / `departure` the movements to set on the way in and out.
+   */
+  readonly terminal?: {
+    readonly dwellS: number;
+    readonly inboundCall: { readonly platform: string; readonly dwellS: number } | null;
+    readonly outboundCall: { readonly platform: string; readonly dwellS: number } | null;
+  };
+}
+
 /** One scheduled train. */
 export interface ServiceSchedule {
   /** Same as the headcode, unique within a shift. */
@@ -51,10 +78,52 @@ export interface ServiceSchedule {
   /** Scheduled pass-through time for a non-stopping train (null if its route avoids the station area). */
   readonly passS: number | null;
   readonly exitS: number;
+  /** Phase 9: set for an ECS siding cycle. For one, `arrivalS` is the time the train is fully stabled and `departureS` the time it leaves the siding. */
+  readonly ecs?: EcsSchedule;
+}
+
+/** Every headcode a service uses: the one it enters with and, for an ECS cycle, the onward one. */
+export const headcodesOf = (s: Pick<ServiceSchedule, 'headcode' | 'ecs'>): string[] => (s.ecs ? [s.headcode, s.ecs.onward.headcode] : [s.headcode]);
+
+/** The useful ways two services in the area together can interact (Phase 10 diagnostics). */
+export type InteractionKind = 'opposing' | 'express-local' | 'branch-main' | 'ecs-passenger';
+
+/** What a timetable asks of the signaller, measured from the scheduled windows. Testing information only. */
+export interface TrafficStats {
+  readonly services: number;
+  /** The most services in the controlled area at one moment. */
+  readonly maxConcurrent: number;
+  /** Pairs of services whose time in the area overlaps. */
+  readonly overlappingPairs: number;
+  /** ...of those, pairs that never share a section or point. */
+  readonly independentSimultaneous: number;
+  /** ...and pairs that share a point or crossing and are kept apart by time alone. */
+  readonly junctionInteractions: number;
+  /** Overlapping pairs whose use of something shared comes within CLOSE_SEQUENCE_S of each other: routes must be prepared in advance. */
+  readonly closeSequences: number;
+  /** Overlapping pairs by kind of interaction (a pair may be of more than one kind). */
+  readonly byKind: Readonly<Record<InteractionKind, number>>;
+}
+
+/** How a shift was generated: what was asked for, what was produced and what had to give. Testing information only. */
+export interface GenerationReport {
+  readonly difficulty: string;
+  readonly targetRange: readonly [number, number];
+  /** The number of services the generator aimed for (inside the range). */
+  readonly requested: number;
+  readonly generated: number;
+  /** Why fewer services than requested were produced; empty when the target was met. */
+  readonly reductionReasons: readonly string[];
+  /** Services moved, re-chosen or dropped, and attempts rejected, with the reason. */
+  readonly revisions: readonly string[];
+  readonly stats: TrafficStats;
 }
 
 export interface Timetable {
   readonly seed: number;
+  /** Phase 10: the difficulty the shift was generated for (absent on a stored older shift). */
+  readonly difficulty?: string;
+  readonly report?: GenerationReport;
   /** Seconds after midnight at shift time 0. */
   readonly startClockS: number;
   readonly services: readonly ServiceSchedule[];
@@ -85,9 +154,11 @@ export interface ServiceActual {
   readonly cancelledS: number | null;
   /** The train could not be created at all (never expected: the timetable is validated). Counted as failed, not completed. */
   readonly failedReason: string | null;
+  /** The platform the train actually stopped at (the scheduled one is `ServiceSchedule.platform`). Absent in older saved shifts. */
+  readonly actualPlatform?: string | null;
 }
 
-export const emptyActual = (): ServiceActual => ({ trainId: null, createdS: null, entryS: null, arrivalS: null, readyS: null, departureS: null, passS: null, exitS: null, cancelledS: null, failedReason: null });
+export const emptyActual = (): ServiceActual => ({ trainId: null, createdS: null, entryS: null, arrivalS: null, readyS: null, departureS: null, passS: null, exitS: null, cancelledS: null, failedReason: null, actualPlatform: null });
 
 /** A service has reached an end state: nothing more will happen to it. */
 export const isTerminal = (a: ServiceActual): boolean => a.exitS !== null || a.cancelledS !== null || a.failedReason !== null;

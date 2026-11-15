@@ -22,9 +22,9 @@ describe('diffSignalling: what changed, in operator language', () => {
     const a = set(set(fresh(), 'U2', 'U3'), 'U3', 'U4');
     const b = set(a, 'U4', 'P1E');
     const t = texts(a, b);
-    assert.ok(t.includes('route: Route U4 → P1E established.'), t.join('|'));
-    assert.ok(t.some((x) => x.startsWith('signal: Signal U4 cleared')), t.join('|'));
-    assert.ok(t.some((x) => x.startsWith('point: Point') && x.includes('locked for route U4 → P1E')), t.join('|'));
+    assert.ok(t.includes('route: Route AJ03 → AJ05 established.'), t.join('|'));
+    assert.ok(t.some((x) => x.startsWith('signal: Signal AJ03 cleared')), t.join('|'));
+    assert.ok(t.some((x) => x.startsWith('point: Point') && x.includes('locked for route AJ03 → AJ05')), t.join('|'));
     assert.ok(t.some((x) => /^point: Point \w+ moved to Reverse\./.test(x)), t.join('|'));
   });
 
@@ -33,8 +33,8 @@ describe('diffSignalling: what changed, in operator language', () => {
     const r = cancelRouteFrom(ctx, a, 'U2');
     assert.ok(r.ok);
     const t = texts(a, r.state);
-    assert.ok(t.includes('route: Route U2 → U3 cancelled.'), t.join('|'));
-    assert.ok(t.includes('signal: Signal U2 returned to Danger.'), t.join('|'));
+    assert.ok(t.includes('route: Route AJ01 → AJ02 cancelled.'), t.join('|'));
+    assert.ok(t.includes('signal: Signal AJ01 returned to Danger.'), t.join('|'));
   });
 
   test('a route whose signal a train has passed is NOT reported as cancelled', () => {
@@ -46,7 +46,7 @@ describe('diffSignalling: what changed, in operator language', () => {
     assert.ok(b.residual[routeId]);
     const t = texts(a, b);
     assert.ok(!t.some((x) => x.includes('cancelled')), t.join('|'));
-    assert.ok(t.includes('signal: Signal U2 returned to Danger.'), t.join('|'));
+    assert.ok(t.includes('signal: Signal AJ01 returned to Danger.'), t.join('|'));
   });
 
   test('a point moved by hand is reported', () => {
@@ -58,17 +58,17 @@ describe('diffSignalling: what changed, in operator language', () => {
   test('forcing an automatic signal to Danger and restoring it are reported', () => {
     const f = setSignalOverride(ctx, fresh(), 'D1', 'FORCED_DANGER');
     assert.ok(f.ok);
-    assert.deepEqual(texts(fresh(), f.state), ['signal: Signal D1 forced to Danger.']);
+    assert.deepEqual(texts(fresh(), f.state), ['signal: Signal AJ107 forced to Danger.']);
     const g = setSignalOverride(ctx, f.state, 'D1', 'AUTOMATIC');
     assert.ok(g.ok);
-    assert.deepEqual(texts(f.state, g.state), ['signal: Signal D1 restored from forced Danger.']);
+    assert.deepEqual(texts(f.state, g.state), ['signal: Signal AJ107 restored from forced Danger.']);
   });
 
   test('U5 is manual: setting a route through it reports it clearing', () => {
     let s = fresh();
     s = set(s, 'U5', 'U6');
     const t = texts(fresh(), s);
-    assert.ok(t.some((x) => x.startsWith('signal: Signal U5 cleared')), t.join('|'));
+    assert.ok(t.some((x) => x.startsWith('signal: Signal AJ04 cleared')), t.join('|'));
   });
 
   test('automatic signals changing aspect are not reported (only forcing is)', () => {

@@ -40,8 +40,9 @@ describe('signal types come from the Phase 1 network', () => {
   const manual = ['U2', 'U3', 'U4', 'U5', 'P1E', 'P2E', 'P2W', 'D2', 'D3', 'DR1', 'M1'];
   const automatic = ['U1', 'U6', 'D1', 'D4', 'M2', 'UW2', 'UW1', 'UE1', 'DE2', 'DE1', 'DW1', 'DW2', 'MW3', 'MW2', 'MW1', 'MX1', 'MX2'];
 
-  test('there are 28 signals: 11 manual and 17 automatic (U5 became manual in Phase 5: it guards PE1)', () => {
-    assert.equal(net.signals.size, 28);
+  test('there are 32 signals: 11 manual, 17 automatic and 4 shunting (U5 became manual in Phase 5: it guards PE1)', () => {
+    assert.equal(net.signals.size, 32);
+    assert.deepEqual([...net.signals.values()].filter((s) => s.type === 'shunting').map((s) => s.id).sort(), ['S1', 'S4', 'S5', 'S6']);
     assert.deepEqual([...net.signals.values()].filter((s) => s.type === 'manual').map((s) => s.id).sort(), [...manual].sort());
     assert.deepEqual([...net.signals.values()].filter((s) => s.type === 'automatic').map((s) => s.id).sort(), [...automatic].sort());
   });
@@ -173,8 +174,8 @@ describe('route setting', () => {
     const r = requestRoute(ctx, fresh(), 'U2', 'D3');
     assert.ok(!r.ok);
     assert.equal(r.rejection.code, 'NO_SUCH_MOVEMENT');
-    assert.match(r.rejection.message, /U2/);
-    assert.match(r.rejection.message, /D3/);
+    assert.match(r.rejection.message, /AJ01/);
+    assert.match(r.rejection.message, /AJ08/);
   });
 
   test('a request from something that is not a signal is rejected', () => {
@@ -205,7 +206,7 @@ describe('route setting', () => {
     assert.ok(!r.ok);
     assert.equal(r.rejection.code, 'SECTION_LOCKED');
     assert.equal(r.rejection.owner, 'P1E>U6');
-    assert.match(r.rejection.message, /conflicting route P1E>U6/);
+    assert.match(r.rejection.message, /conflicting route AJ05 → AJ103/);
   });
 
   test('two routes cannot converge on the same section', () => {
@@ -347,7 +348,7 @@ describe('point control', () => {
     const s: SignallingState = { ...fresh(), pointLocks: { WXU: rogue.id } };
     const rej = validateRoute(ctx, s, route.id);
     assert.equal(rej?.code, 'POINT_LOCKED');
-    assert.match(rej?.message ?? '', /point WXU is locked by route U3>DR1/);
+    assert.match(rej?.message ?? '', /point WXU is locked by route AJ02 → AJ10/);
   });
 });
 
@@ -360,7 +361,7 @@ describe('route cancellation and release', () => {
     s = r.state;
     assert.equal(aspects(s)['U2'], 'red');
     assert.equal(s.routes['U2'], undefined);
-    assert.match(r.message, /Signal U2 returns to Red/);
+    assert.match(r.message, /Signal AJ01 returns to Red/);
   });
 
   test('cancelling releases only the locks belonging to that route', () => {
@@ -460,7 +461,7 @@ describe('aspect explanations', () => {
 
   test('a clear signal names the next signal and its aspect', () => {
     const s = set(fresh(), 'U2', 'U3');
-    assert.match(why(s, 'U2'), /Next signal U3 shows Red/);
+    assert.match(why(s, 'U2'), /Next signal AJ02 shows Red/);
     assert.match(why(fresh(), 'UE1'), /boundary is clear/);
   });
 });
@@ -518,13 +519,14 @@ describe('randomised operation sequences never break the interlocking', () => {
         assert.notEqual(reason, 'Held at Red by the interlocking.', `${label}: ${id} is Red with no concrete reason`);
         continue;
       }
-      assert.match(reason, /^(Route clear|The line ahead)/, `${label}: ${id} explanation`);
+      assert.match(reason, /^(Route clear|The line ahead|The route into the sidings|Proceed:|Caution:)/, `${label}: ${id} explanation`);
+      if (signal.mainline) continue; // green only because a proven route through it enters the sidings (checked by the Phase 9 tests)
       // A signal that is not at Red protects a movement that is clear, correctly set and held.
-      const route = signal.type === 'manual' ? ctx.route(state.routes[id] ?? '') : ctx.from(id)[0];
+      const route = signal.type !== 'automatic' ? ctx.route(state.routes[id] ?? '') : ctx.from(id)[0];
       assert.ok(route, `${label}: ${id} shows ${aspect} with no movement`);
       for (const s of route.sections) assert.ok(!state.network.sectionOccupancy[s], `${label}: ${id} shows ${aspect} but ${s} is occupied`);
       for (const req of route.points) assert.equal(state.network.pointPositions[req.point], req.position, `${label}: ${id} shows ${aspect} but ${req.point} is not in position`);
-      if (signal.type === 'manual') assert.ok(isRouteProven(state, route), `${label}: ${id} cleared without a proven route`);
+      if (signal.type !== 'automatic') assert.ok(isRouteProven(state, route), `${label}: ${id} cleared without a proven route`);
     }
   }
 

@@ -7,7 +7,7 @@
  *   Class 2  regional  UP/DOWN main, branch and platform loops; stops at its
  *                      assigned platform and dwells, never stops on the main
  *                      line for a station stop
- *   Class 5  ECS       mains and loops; may run through or stop at a platform
+ *   Class 5  ECS       mains, loops, (Phase 9) the branch, for the Merefield cycles, and the sidings: the ONLY class that may enter them; may run through or stop at a platform
  *
  * Speeds are metres per second. `entrySpeedMs` is the speed at the boundary.
  */
@@ -65,7 +65,7 @@ export const CLASS_PROFILES: Readonly<Record<TrainClassId, ClassProfile>> = {
     entrySpeedMs: 15,
     defaultDwellS: 20,
     canStop: true,
-    lines: ['UP', 'DOWN', 'PLATFORM', 'CROSSOVER', 'LINK'],
+    lines: ['UP', 'DOWN', 'BRANCH', 'PLATFORM', 'CROSSOVER', 'LINK', 'SIDING'],
   },
 };
 

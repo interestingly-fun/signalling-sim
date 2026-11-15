@@ -39,7 +39,7 @@ describe('Ashcombe Junction network: required content', () => {
   });
 
   test('has boundaries for Northbridge (UP), Westford (DOWN) and Merefield (BRANCH)', () => {
-    const locations = new Set([...net.boundaries.values()].map((b) => b.location));
+    const locations = new Set([...net.boundaries.values()].filter((b) => !b.buffer).map((b) => b.location));
     assert.deepEqual([...locations].sort(), ['Merefield', 'Northbridge', 'Westford']);
     for (const loc of locations) {
       const bs = [...net.boundaries.values()].filter((b) => b.location === loc);
@@ -185,10 +185,10 @@ describe('traversal: points decide which connections exist', () => {
   });
 
   test('traffic directions are respected (no eastbound movement onto westbound-only track)', () => {
-    // EXD normal leg is DN3 (westbound only): an eastbound move from DN4 must not enter it.
-    const steps = stepsFrom(net, sectionEnd('DN4', 'B'));
+    // DN2 is westbound only: an eastbound move out of DN3 (Phase 9: DN3 also carries shunting moves) must not enter it.
+    const steps = stepsFrom(net, sectionEnd('DN3', 'B'));
     const entered = steps.flatMap((s) => (s.kind === 'enter' ? [s.enter.section] : []));
-    assert.deepEqual(entered, ['XE']);
+    assert.deepEqual(entered, ['LS1']);
   });
 
   test('exits are only offered at boundaries that permit leaving', () => {
@@ -211,6 +211,8 @@ describe('derived route table', () => {
       'D4>DW1',
       'DE1>D1',
       'DE2>DE1',
+      'DR1>S1',
+      'DR1>S4',
       'DR1>U6',
       'DW1>DW2',
       'DW2>W-OUT',
@@ -221,10 +223,21 @@ describe('derived route table', () => {
       'MW3>MW2',
       'MX1>MX2',
       'MX2>M-IO',
+      'P1E>S4',
       'P1E>U6',
+      'P2E>S1',
+      'P2E>S4',
       'P2E>U6',
       'P2W>D4',
       'P2W>M2',
+      'S1>SD1-BUF',
+      'S1>SD2-BUF',
+      'S4>SD1-BUF',
+      'S4>SD2-BUF',
+      'S5>D3',
+      'S5>P2W',
+      'S6>D3',
+      'S6>P2W',
       'U1>U2',
       'U2>U3',
       'U3>DR1',
@@ -232,6 +245,7 @@ describe('derived route table', () => {
       'U3>U4',
       'U4>P1E',
       'U4>U5',
+      'U5>S4',
       'U5>U6',
       'U6>UE1',
       'UE1>N-OUT',
@@ -265,10 +279,10 @@ describe('derived route table', () => {
     for (let guard = 0; guard < 60; guard++) {
       const next = nextWithPositions(net, leaving, positions);
       if (!next) return { visited, blocked: true as const };
-      if (next.kind === 'exit') return { visited, blocked: false as const, exit: next.boundary };
+      if (next.kind === 'exit' || next.kind === 'buffer') return { visited, blocked: false as const, exit: next.boundary };
       visited.push(next.enter.section);
       leaving = { section: next.enter.section, end: next.enter.end === 'A' ? 'B' : 'A' };
-      if (net.signalLeaving(leaving)) return { visited, blocked: false as const, signal: net.signalLeaving(leaving)?.id };
+      if (net.signalLeaving(leaving) && (!net.signalLeaving(leaving)?.mainline || net.signalLeaving(leaving)?.id === route.to)) return { visited, blocked: false as const, signal: net.signalLeaving(leaving)?.id };
     }
     throw new Error('replay did not terminate');
   }
@@ -334,7 +348,8 @@ describe('which journeys the layout supports (reachability over the route table)
     while (queue.length > 0) {
       const cur = queue.pop();
       if (cur === undefined) break;
-      for (const r of routes.filter((x) => x.from === cur)) {
+      // The sidings (shunting signals) are not through journeys: the ECS cycle is tested separately.
+      for (const r of routes.filter((x) => x.from === cur && net.signals.get(x.from)?.type !== 'shunting' && net.signals.get(x.to)?.type !== 'shunting' && !net.boundaries.get(x.to)?.buffer)) {
         for (const sid of r.sections) {
           const p = net.sections.get(sid)?.platform;
           if (p) platforms.add(p);
