@@ -303,3 +303,95 @@ One test train. Nothing in `engine/trains` knows about coordinates.
 - Speed restrictions are by section and by diverging leg, not by train type or time of day.
 - A human signaller can still create a head-on deadlock on the single-track branch by setting conflicting routes early; the timetable avoids it but the interlocking does not forbid it.
 - Concurrency depends on the lone-train windows; a late train can delay the next one.
+
+## 15. Phase 8.5: diagram navigation, interface, platforms, signal names
+
+**Diagram view** (`ui/diagram/viewport.ts`, `SignallingDiagram.tsx`). The drawing is a single `<g transform="translate(tx ty) scale(k)">`; trains are drawn by `TrainLayer` inside the same group, so everything shares the transform. Pure maths (`zoomAbout`, `panBy`, `clampView`) keeps the point under the pointer fixed and the drawing inside the viewport. Pointer positions are converted to viewBox space from the SVG's bounding rectangle; clicks use the DOM and are unaffected by the transform. A press becomes a drag after 4 px, the click that follows a drag is swallowed in the capture phase, and two pointers pinch. Overlays (compact inspector, toggles, navigation) are outside the transformed group.
+
+**Train symbols.** `TrackPath.trailing(m, drawnLen)` returns a polyline of fixed drawn length ending at the nose; `trainDrawnLength(lengthM)` depends only on the train's own length.
+
+**Layout of the page.** Diagram, timetable (+ optional log), optional testing group. Hiding the log or the testing group only removes their rendering; `attachLogging` keeps recording.
+
+**Platforms.** `StopState` has `scheduledPlatform` (never changes) and `platform`/`section` (actual). `lookAhead` stops a train still due its station stop at the first platform it reaches that it fits; `stepTrain` retargets the stop and raises `platform-changed`. `validateRouteForTrains` (protection.ts) adds the train-aware refusal (platform too short) on top of `validateRoute`; occupancy, locks, point and opposing-route conflicts come from the interlocking. Approach locking still prevents cancelling a route a train has committed to, so reassignment needs the route cancelled first.
+
+**Signal identity.** `SignalDef.id` is the permanent internal id; `name` is shown (`signalName`, `ctx.signalName`, `ctx.routeName`); `topology/naming.ts` audits the convention (manual `AJ##`, automatic `AJ###`) and `buildNetwork` rejects duplicate names. Engine messages are built from display names.
+
+### Phase 8.5 limitations
+- The platform check only knows the train waiting at (or held by) the entrance signal; a route set far ahead of any train is checked later by the train itself, which runs through a platform it does not fit.
+- The event log, testing group and view are not remembered between page loads.
+- Existing saved shifts keep their old text; they do not record an actual platform.
+
+
+## 16. Phase 9: sidings, shunting signals, reversal and ECS cycles
+
+**Topology.** New `SIDING` sections (SD1, SD2, ENT1, ENT2, leads LS1/LSX/LS3, LU1/LU2, LS2), points SLP, SLU, SLN, STP, a second diamond (UPX × LSX), `buffer` boundaries at the siding ends, `SidingDef` (section, exit signal, clearance) and `ReversalBayDef` (section, stop end, stop signal, departure signal). Capacity is never stored: `sidingCapacityM` = section length − clearance. Geometry (`layout/ashcombeLayout.ts`, `marginTop`, `signalLabelOffsets`) is separate from the simulated lengths.
+
+**Signals.** `SignalType 'shunting'`. A shunting signal is manual in every interlocking check (`type !== 'automatic'`), shows red or green (`aspects.ts`) and never clears without a proven route. `SignalDef.mainline` marks AJ1/AJ4: `deriveRoutes` runs other signals' routes straight through them, never ends a route at one, and only emits routes *from* them that take their point in the reverse position (into the sidings). `signalAtEnd` skips them, so lookahead and the train step ignore their aspect; their own route is still released behind a train. A main-line signal is green when the section locked at its diverging leg belongs to a proven route. Routes may end at a `buffer` boundary; a route ending at a buffer or a shunting signal makes the signal behind show a stop-ahead aspect.
+
+**Reversal** (`trains/ecs.ts`). `reverseTrain` is pure: it keeps the occupied path steps in reverse order, flips the entry end and sets `frontM = total − rear`, so occupancy is unchanged and front/rear are recomputed. `ecsAdvance` runs the phases; the train must be stopped and wholly inside the bay/siding. A pending bay reversal makes its stop signal a stop (`mustStopAt`). On completion the train's held residual routes are released (it no longer needs them).
+
+**ECS job** (`Train.ecs: EcsJob`). Stages `inbound → stabled → preparing → ready → leaving → onward`; the headcode, class and destination change in `preparing`, not while entering. Class 5 is the only class permitted on `SIDING` (and `BRANCH` for cycles); a train working an ECS job after stabling is exempt from the siding restriction (`leavingSiding`). `protection.ts` refuses non-Class-5 entry and trains too long for a siding.
+
+**Planning** (`trains/ecsPlan.ts`). A depth-first search over the derived route graph finds approach and departure legs (including bay reversals that fit); plans are cached per context. `nextEcsMovement` gives the next movement to set (used by the tests-only bot).
+
+**Timetable.** An ECS service carries `EcsSchedule`. `ecsProfile` measures a lone-train run with zero stabling; `ecsIntervals` shifts the departure half by the stabling time, so resource windows (sections, siding, points) are per visit. The generator picks 0, 1 or 2 ECS slots per shift, and `validateEcsService` rechecks capacity, class compatibility and route availability.
+
+### Phase 9 limitations
+- Reversal time is a fixed 60 s; there is no driver or crew model.
+- The siding approach and departure routes follow the derived route graph; the generator takes the simplest valid arrangement for a seed, not every possible one.
+- The tests-only bot plays the signaller in the tests; with a human signaller a delay can create a head-on conflict on the single-track branch that the human must resolve (the bot cannot).
+- ECS cycles are measured with a lone-train simulation; actual exit times can differ from the schedule by up to tens of seconds.
+- The browser test used the bundled build with Playwright; Vite itself could not be run here (no network).
+
+### Phase 9 correction: associations, shunting authority, siding speed
+
+`SignalDef.associatedMain` links a mainline shunting signal to the manual signals it may serve. `routeTable` derives `shuntAccess` routes (main → shunting signal); `aspects.ts` keeps the main at Danger for them. `trains/shunting.ts` decides when a Danger signal does not stop a train: only a shunting movement (ECS inbound leg), only for the associated main, only while the shunting signal's own route is proven. `protection.ts` refuses access routes to anything but Class 5 ECS. Siding interior speed: `sidingInteriorMph` (5). Limitations: the timetable profile now counts reserved sections for ECS windows; there is no driver-side "call-on" model beyond this.
+
+## 17. Phase 10: difficulty and conflict-aware generation
+
+**Data.** `timetable/difficulty.ts` holds `DifficultyProfile` records (count range, class share, ECS limits, overlap bias, interaction weight, extra margin, shift span, minimum peak concurrency). Nothing in the generator names a level.
+
+**Planner** (`generate.ts`). Services are chosen from a seeded stream, then placed one by one. `windowsOf` (validate.ts) gives each service's section/point/siding windows, measured once at entry 0 per distinct journey (`profile.ts` uses the real `stepFleet`) and shifted. An `Occupancy` index refuses any candidate entry time (10 s steps) that conflicts inside `SEPARATION_S` plus the difficulty margin or breaks the entry headway; remaining candidates are scored by `overlapScore` (independent and useful interactions rewarded). ECS cycles are never placed last or second-to-last (`ecsPlacementIssue`). A shortfall is reported in `GenerationReport.reductionReasons`. `validateTimetable` remains the independent final check; the interlocking remains the final authority at runtime.
+
+**Analysis** (`analysis.ts`). `analyseTraffic` derives peak concurrency, overlapping pairs, independent vs junction-sharing pairs, close sequences and interaction kinds from the windows. Shown in `ui/panels/GenerationInfo.tsx` (testing information only).
+
+### Phase 10 limitations
+- Generation is not instant at Expert (about 2–5 s cold, occasional outliers around 10 s; later shifts are faster because lone-train profiles are cached). The UI shows "Generating…".
+- "Achievable" is established by construction (windows from the real simulation) and checked empirically with the tests-only bot (small delays), not by formal proof; a human signaller who is slow can still cause delay.
+- Difficulty counts are targets: the generator may reduce them and says why.
+
+
+## Phase 10.5: smooth aspect transitions
+
+Drawing only (`SignallingDiagram.tsx` `Signal`, `styles.css`). Every lamp of a head (red, yellow, green, the two Double Yellow lamps) and both triangle indications of a shunting signal (stop, proceed) are always mounted; the one(s) matching the LOGICAL aspect carry the class `lit`, recomputed on every render, and `data-aspect` records the aspect. Unlit layers have `opacity: 0`. Inside `@media (prefers-reduced-motion: no-preference)` an unlit layer transitions `opacity 90ms ease-out`, a lit layer `opacity 110ms ease-in 90ms` (fade out, then fade in; 200 ms). A CSS transition interrupted by a new aspect re-targets from its current value, so rapid changes leave nothing stale and the settled picture is always the current aspect. No JavaScript timers, state or animation frames are involved; nothing outside the diagram reads `lit`, so the engine and simulation are untouched. With reduced motion the media query does not apply and the change is immediate.
+
+### Phase 10.5 limitations
+- During the 90 ms gap between fade-out and fade-in the head is momentarily dark (deliberate, so incompatible aspects are never both visible).
+- Reduced motion is read from the operating system / browser; there is no in-app switch.
+
+## 18. Main menu and map selection (preliminary to Phase 11)
+
+Presentation only; the engine, layout and workstation are untouched.
+
+- `src/ui/menu/maps.ts` — structured `MapDef` data (name, difficulty key/label/colour, description, feature bullets, `planned` flag, `PreviewDef`).
+- `src/ui/menu/nav.ts` — pure `navigate(screen, action, playable)` transitions: menu → select → info → play. `play` is reachable only from the matching info page and only when `playable(id)`; it has no back transition.
+- `src/ui/menu/Shell.tsx` — holds in-memory screen state and a `WorkstationRegistry` (`{ ashcombe: App, northbridge: NorthbridgeApp }`). A map is playable when it has a registry entry. Phase 11 can add entries without redesign.
+- `src/ui/menu/screens.tsx`, `LayoutPreview.tsx`, `menu.css` — the screens. The Ashcombe preview draws the static section polylines and platforms from `ashcombeLayout` (no signals, points, trains or interaction); the other previews are labelled conceptual schematics.
+- `src/main.tsx` renders `<Shell />` instead of `<App />`.
+
+## 19. Northbridge Station (second map)
+
+The map is data plus a few generic mechanisms; Ashcombe's simulation is not copied.
+
+- **Topology** (`topology/northbridge.ts`): 84 sections, 20 points, 35 signals (no terminus entry signals: NB03 and NB10 route straight to a platform buffer). New optional definition fields: `SectionDef.corridor` and `speedClass`, `PlatformDef.access`, `NetworkDef.corridors` and `terminals` (`TerminalDef`: platform, entry signal, departure signal, buffer). End A is west for every line.
+- **Corridors** (`trains/corridors.ts`): a train's corridor is that of its origin boundary; a route may only use one corridor (`validateRoute` → `CORRIDOR_RESTRICTED`) and a train may only be routed to platforms whose `access` includes its corridor (`validateRouteForTrains` → `PLATFORM_ACCESS`). The interlocking is the final authority; timetable planning uses the same functions.
+- **Terminating cycle** (`trains/terminal.ts`): `TerminalJob` stages inbound → reversing → ready → leaving → done. `terminalHolds` keeps the train still while changing ends; `reverseTrain` swaps front and rear (occupancy unchanged); the new headcode/class/destination are applied at the end of the 60 s; the departure signal starts `leaving`; the platform is released when the rear has cleared it. `terminalPlan.ts` plans approach and departure paths per corridor.
+- **Timetable**: a terminating service is an `ServiceSchedule.ecs` with `ecs.terminal`, so the ECS split rows and validation are reused. Windows come from a measured lone-train profile (`terminalProfile`); `generateTerminusTimetable` places services with the shared `Occupancy` search (seeded, difficulty profiles, overlap bias on AJ and BR, fallback to a smaller valid timetable).
+- **UI**: `createWorkstation(def)` in `App.tsx` builds a workstation for a map; Ashcombe and Northbridge are two instances with separate storage keys. `northbridgeLayout.ts` is validated by `validateLayout`; diagram geometry is independent of the simulated lengths.
+
+### Northbridge limitations
+- Eastbound fast/slow on BR follows the entry line the timetable picks; westbound it is the signaller's route choice at NB13.
+- Class 1 trains that are not flexible models cannot terminate (platform line kind); express services use flexible Class 1 stock.
+- Crossovers, connectors and departure signals were added to the supplied drawing so trains can be routed; logical connectivity otherwise follows the screenshot.
+- Expert timetables may contain fewer than 19 services when a conflict-free timetable of that size is not found.
+- Throat point labels overlap at 100% zoom and are legible when zoomed in.
