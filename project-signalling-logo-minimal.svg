@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 280" width="1300" height="280" role="img" aria-label="Project: Signalling">
-  <g font-family="Inter, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="128" fill="#eef3f9">
-    <text x="40" y="190" font-weight="300" fill="#9fb0c4" textLength="420" lengthAdjust="spacingAndGlyphs">Project</text>
-    <!-- the colon is a two-aspect signal: red over green -->
-    <circle cx="512" cy="108" r="17" fill="#ff3b30"/>
-    <circle cx="512" cy="168" r="17" fill="#3dff8a"/>
-    <text x="564" y="190" font-weight="600" textLength="700" lengthAdjust="spacingAndGlyphs">Signalling</text>
-  </g>
-</svg>
